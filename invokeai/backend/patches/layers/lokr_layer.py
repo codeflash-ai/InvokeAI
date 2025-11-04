@@ -3,7 +3,6 @@ from typing import Dict
 import torch
 
 from invokeai.backend.patches.layers.lora_layer_base import LoRALayerBase
-from invokeai.backend.util.calc_tensor_size import calc_tensors_size
 
 
 class LoKRLayer(LoRALayerBase):
@@ -122,6 +121,8 @@ class LoKRLayer(LoRALayerBase):
         self.t2 = self.t2.to(device=device, dtype=dtype) if self.t2 is not None else self.t2
 
     def calc_size(self) -> int:
-        return super().calc_size() + calc_tensors_size(
-            [self.w1, self.w1_a, self.w1_b, self.w2, self.w2_a, self.w2_b, self.t2]
-        )
+        size = super().calc_size()
+        for t in (self.w1, self.w1_a, self.w1_b, self.w2, self.w2_a, self.w2_b, self.t2):
+            if t is not None:
+                size += t.nelement() * t.element_size()
+        return size
