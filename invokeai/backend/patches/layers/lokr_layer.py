@@ -34,16 +34,24 @@ class LoKRLayer(LoRALayerBase):
         self.t2 = t2
 
         # Validate parameters.
-        assert (self.w1 is None) != (self.w1_a is None)
-        assert (self.w1_a is None) == (self.w1_b is None)
-        assert (self.w2 is None) != (self.w2_a is None)
-        assert (self.w2_a is None) == (self.w2_b is None)
+        # Merge the assertions into one block for slightly improved performance on Python assertion checks
+        w1_none = self.w1 is None
+        w1_a_none = self.w1_a is None
+        w1_b_none = self.w1_b is None
+        w2_none = self.w2 is None
+        w2_a_none = self.w2_a is None
+        w2_b_none = self.w2_b is None
+
+        assert w1_none != w1_a_none and w1_a_none == w1_b_none and w2_none != w2_a_none and w2_a_none == w2_b_none
 
     def _rank(self) -> int | None:
-        if self.w1_b is not None:
-            return self.w1_b.shape[0]
-        elif self.w2_b is not None:
-            return self.w2_b.shape[0]
+        # Store reference to w1_b and w2_b to avoid repeated attribute access
+        w1_b = self.w1_b
+        w2_b = self.w2_b
+        if w1_b is not None:
+            return w1_b.shape[0]
+        elif w2_b is not None:
+            return w2_b.shape[0]
         else:
             return None
 
