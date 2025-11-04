@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -116,10 +117,7 @@ class WatermarkDecoder(object):
 
     def reconstruct_uuid(self, bits):
         nums = np.packbits(bits)
-        bstr = b""
-        for i in range(16):
-            bstr += struct.pack(">B", nums[i])
-
+        bstr = nums[:16].tobytes()
         return str(uuid.UUID(bytes=bstr))
 
     def reconstruct_bits(self, bits):
