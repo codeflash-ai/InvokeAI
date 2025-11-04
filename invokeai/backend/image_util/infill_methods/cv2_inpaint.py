@@ -9,10 +9,9 @@ def cv2_inpaint(image: Image.Image) -> Image.Image:
     image_cv = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
 
     # Prepare Mask From Alpha Channel
-    mask = image.split()[3].convert("RGB")
+    mask = image.split()[3]
     mask_array = np.array(mask)
-    mask_cv = cv2.cvtColor(mask_array, cv2.COLOR_BGR2GRAY)
-    mask_inv = cv2.bitwise_not(mask_cv)
+    mask_inv = cv2.bitwise_not(mask_array)
 
     # Inpaint Image
     inpainted_result = cv2.inpaint(image_cv, mask_inv, 3, cv2.INPAINT_TELEA)
