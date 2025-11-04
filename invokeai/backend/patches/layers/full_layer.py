@@ -31,4 +31,5 @@ class FullLayer(LoRALayerBase):
         self.weight = self.weight.to(device=device, dtype=dtype)
 
     def calc_size(self) -> int:
-        return super().calc_size() + calc_tensor_size(self.weight)
+        bias_size = calc_tensor_size(self.bias) if self.bias is not None else 0
+        return bias_size + calc_tensor_size(self.weight)
