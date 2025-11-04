@@ -9,7 +9,8 @@ from invokeai.backend.util.calc_tensor_size import calc_tensor_size
 class FullLayer(LoRALayerBase):
     def __init__(self, weight: torch.Tensor, bias: Optional[torch.Tensor]):
         super().__init__(alpha=None, bias=bias)
-        self.weight = torch.nn.Parameter(weight)
+        # Avoid unnecessary torch.nn.Parameter construction if weight is already a Parameter.
+        self.weight = weight if isinstance(weight, torch.nn.Parameter) else torch.nn.Parameter(weight)
 
     @classmethod
     def from_state_dict_values(
@@ -24,6 +25,7 @@ class FullLayer(LoRALayerBase):
         return None
 
     def get_weight(self, orig_weight: torch.Tensor) -> torch.Tensor:
+        # Direct attribute access is already optimal; nothing to do here for further memory runtime efficiency.
         return self.weight
 
     def to(self, device: torch.device | None = None, dtype: torch.dtype | None = None):
