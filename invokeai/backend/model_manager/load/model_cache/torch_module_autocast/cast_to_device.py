@@ -10,6 +10,6 @@ def cast_to_device(t: T, to_device: torch.device) -> T:
     if t is None:
         return t
 
-    if t.device.type != to_device.type:
+    if t.device != to_device:
         return t.to(to_device)
     return t
