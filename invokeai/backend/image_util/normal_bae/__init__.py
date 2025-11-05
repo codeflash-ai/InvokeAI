@@ -7,7 +7,6 @@ import cv2
 import huggingface_hub
 import numpy as np
 import torch
-import torchvision.transforms as transforms
 from einops import rearrange
 from PIL import Image
 
@@ -56,7 +55,12 @@ class NormalMapDetector:
 
     def __init__(self, model: NNET) -> None:
         self.model = model
-        self.norm = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        # Precompute normalization parameters as torch tensors for fast, batchable, device-aware ops
+        mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32)
+        std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32)
+        self.registered_mean = mean.view(1, 3, 1, 1)
+        self.registered_std = std.view(1, 3, 1, 1)
+        # preserves the code-level intent of using Normalize; avoids transforms.Normalize overhead
 
     def to(self, device: torch.device):
         self.model.to(device)
@@ -73,17 +77,20 @@ class NormalMapDetector:
         # The model requires the image to be a multiple of 8
         np_image = resize_to_multiple(np_image, 8)
 
-        image_normal = np_image
-
         with torch.no_grad():
-            image_normal = torch.from_numpy(image_normal).float().to(device)
-            image_normal = image_normal / 255.0
-            image_normal = rearrange(image_normal, "h w c -> 1 c h w")
-            image_normal = self.norm(image_normal)
+            image_tensor = torch.from_numpy(np_image).float().to(device)
+            image_tensor = image_tensor / 255.0
+            # (H, W, C) -> (1, C, H, W)
+            image_tensor = rearrange(image_tensor, "h w c -> 1 c h w")
 
-            normal = self.model(image_normal)
+            # Fast in-place batch normalization
+            mean = self.registered_mean.to(device=device, dtype=image_tensor.dtype)
+            std = self.registered_std.to(device=device, dtype=image_tensor.dtype)
+            image_tensor = (image_tensor - mean) / std
+
+            normal = self.model(image_tensor)
             normal = normal[0][-1][:, :3]
-            normal = ((normal + 1) * 0.5).clip(0, 1)
+            normal = ((normal + 1) * 0.5).clamp_(0, 1)
 
             normal = rearrange(normal[0], "c h w -> h w c").cpu().numpy()
             normal_image = (normal * 255.0).clip(0, 255).astype(np.uint8)
