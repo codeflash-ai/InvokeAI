@@ -16,6 +16,38 @@ from PIL import Image
 
 from invokeai.backend.stable_diffusion.diffusers_pipeline import image_resized_to_grid_as_tensor
 
+_LMS_MATRIX_1 = torch.tensor(
+    [[1.0, 0.3963377774, 0.2158037573], [1.0, -0.1055613458, -0.0638541728], [1.0, -0.0894841775, -1.2914855480]]
+)
+
+_RGB_MATRIX = torch.tensor(
+    [
+        [4.0767416621, -3.3077115913, 0.2309699292],
+        [-1.2684380046, 2.6097574011, -0.3413193965],
+        [-0.0041960863, -0.7034186147, 1.7076147010],
+    ]
+)
+
+_LMS_MATRIX = torch.tensor(
+    [
+        [0.4122214708, 0.5363325363, 0.0514459929],
+        [0.2119034982, 0.6806995451, 0.1073969566],
+        [0.0883024619, 0.2817188376, 0.6299787005],
+    ]
+)
+
+_LAB_MATRIX = torch.tensor(
+    [
+        [0.2104542553, 0.7936177850, -0.0040720468],
+        [1.9779984951, -2.4285922050, 0.4505937099],
+        [0.0259040371, 0.7827717662, -0.8086757660],
+    ]
+)
+
+_K_LMS_MATRIX = torch.tensor(
+    [[0.3963377774, 0.2158037573], [-0.1055613458, -0.0638541728], [-0.0894841775, -1.2914855480]]
+)
+
 MAX_FLOAT = torch.finfo(torch.tensor(1.0).dtype).max
 
 # CIE Lab to Uniform Perceptual Lab profile is copyright © 2003 Bruce Justin Lindbloom. All rights reserved. <http://www.brucelindbloom.com>
@@ -178,56 +210,30 @@ def max_srgb_saturation_tensor(units_ab_tensor: torch.Tensor, steps: int = 1):
 def linear_srgb_from_oklab(oklab_tensor: torch.Tensor):
     """Get linear-light sRGB from an Oklab image tensor"""
 
-    # L*a*b* to LMS
-    lms_matrix_1 = torch.tensor(
-        [[1.0, 0.3963377774, 0.2158037573], [1.0, -0.1055613458, -0.0638541728], [1.0, -0.0894841775, -1.2914855480]]
-    )
+    # Use precomputed constant
+    lms_tensor_1 = torch.einsum("lwh, kl -> kwh", oklab_tensor, _LMS_MATRIX_1)
+    lms_tensor = lms_tensor_1**3.0
 
-    lms_tensor_1 = torch.einsum("lwh, kl -> kwh", oklab_tensor, lms_matrix_1)
-    lms_tensor = torch.pow(lms_tensor_1, 3.0)
-
-    # LMS to linear RGB
-    rgb_matrix = torch.tensor(
-        [
-            [4.0767416621, -3.3077115913, 0.2309699292],
-            [-1.2684380046, 2.6097574011, -0.3413193965],
-            [-0.0041960863, -0.7034186147, 1.7076147010],
-        ]
-    )
-
-    linear_srgb_tensor = torch.einsum("kwh, sk -> swh", lms_tensor, rgb_matrix)
+    # Use precomputed constant
+    linear_srgb_tensor = torch.einsum("kwh, sk -> swh", lms_tensor, _RGB_MATRIX)
 
     return linear_srgb_tensor
 
 
 def oklab_from_linear_srgb(linear_srgb_tensor: torch.Tensor):
     """Get an Oklab image tensor from a tensor of linear-light sRGB"""
-    # linear RGB to LMS
-    lms_matrix = torch.tensor(
-        [
-            [0.4122214708, 0.5363325363, 0.0514459929],
-            [0.2119034982, 0.6806995451, 0.1073969566],
-            [0.0883024619, 0.2817188376, 0.6299787005],
-        ]
-    )
-
-    lms_tensor = torch.einsum("cwh, kc -> kwh", linear_srgb_tensor, lms_matrix)
+    # Use precomputed constant
+    lms_tensor = torch.einsum("cwh, kc -> kwh", linear_srgb_tensor, _LMS_MATRIX)
 
     # LMS to L*a*b*
-    lms_tensor_neg_mask = torch.lt(lms_tensor, 0.0)
-    lms_tensor[lms_tensor_neg_mask] = torch.mul(lms_tensor[lms_tensor_neg_mask], -1.0)
-    lms_tensor_1 = torch.pow(lms_tensor, 1.0 / 3.0)
-    lms_tensor[lms_tensor_neg_mask] = torch.mul(lms_tensor[lms_tensor_neg_mask], -1.0)
-    lms_tensor_1[lms_tensor_neg_mask] = torch.mul(lms_tensor_1[lms_tensor_neg_mask], -1.0)
-    lab_matrix = torch.tensor(
-        [
-            [0.2104542553, 0.7936177850, -0.0040720468],
-            [1.9779984951, -2.4285922050, 0.4505937099],
-            [0.0259040371, 0.7827717662, -0.8086757660],
-        ]
-    )
+    lms_tensor_neg_mask = lms_tensor < 0.0
+    # Avoid in-place for efficiency; only operate on neg where needed
+    lms_tensor_abs = torch.where(lms_tensor_neg_mask, -lms_tensor, lms_tensor)
+    lms_tensor_1 = torch.pow(lms_tensor_abs, 1.0 / 3.0)
+    lms_tensor_1 = torch.where(lms_tensor_neg_mask, -lms_tensor_1, lms_tensor_1)
 
-    lab_tensor = torch.einsum("kwh, lk -> lwh", lms_tensor_1, lab_matrix)
+    # Use precomputed constant
+    lab_tensor = torch.einsum("kwh, lk -> lwh", lms_tensor_1, _LAB_MATRIX)
 
     return lab_tensor
 
@@ -264,87 +270,64 @@ def find_gamut_intersection_tensor(
 ):
     """Find thresholds of lightness intersecting RGB gamut from Oklab component tensors"""
 
+    from invokeai.backend.image_util.composition import find_cusp_tensor
+
     if lc_cusps_tensor is None:
         lc_cusps_tensor = find_cusp_tensor(units_ab_tensor, steps=steps)
 
-    # if (((l_1 - l_0) * c_cusp -
-    #      (l_cusp - l_0) * c_1) <= 0.):
-    cond_tensor = torch.sub(
-        torch.mul(torch.sub(l_1_tensor, l_0_tensor), lc_cusps_tensor[1, :, :]),
-        torch.mul(torch.sub(lc_cusps_tensor[0, :, :], l_0_tensor), c_1_tensor),
-    )
+    cond_tensor = (l_1_tensor - l_0_tensor) * lc_cusps_tensor[1, :, :] - (
+        lc_cusps_tensor[0, :, :] - l_0_tensor
+    ) * c_1_tensor
+
+    # Only evaluate repeated-used slices once
+    c1 = c_1_tensor
+    l0 = l_0_tensor
+    l1 = l_1_tensor
+    lc0 = lc_cusps_tensor[0, :, :]
+    lc1 = lc_cusps_tensor[1, :, :]
+
+    numer0 = lc1 * l0
+    denom0 = c1 * lc0 + lc1 * (l0 - l1)
+    numer1 = lc1 * (l0 - 1.0)
+    denom1 = c1 * (lc0 - 1.0) + lc1 * (l0 - l1)
 
     t_tensor = torch.where(
-        torch.le(cond_tensor, 0.0),  # cond <= 0
-        #  t = (c_cusp * l_0) /
-        #      ((c_1 * l_cusp) + (c_cusp * (l_0 - l_1)))
-        torch.div(
-            torch.mul(lc_cusps_tensor[1, :, :], l_0_tensor),
-            torch.add(
-                torch.mul(c_1_tensor, lc_cusps_tensor[0, :, :]),
-                torch.mul(lc_cusps_tensor[1, :, :], torch.sub(l_0_tensor, l_1_tensor)),
-            ),
-        ),
-        # t = (c_cusp * (l_0-1.)) /
-        #     ((c_1 * (l_cusp-1.)) + (c_cusp * (l_0 - l_1)))
-        torch.div(
-            torch.mul(lc_cusps_tensor[1, :, :], torch.sub(l_0_tensor, 1.0)),
-            torch.add(
-                torch.mul(c_1_tensor, torch.sub(lc_cusps_tensor[0, :, :], 1.0)),
-                torch.mul(lc_cusps_tensor[1, :, :], torch.sub(l_0_tensor, l_1_tensor)),
-            ),
-        ),
+        cond_tensor <= 0.0,
+        torch.div(numer0, denom0),
+        torch.div(numer1, denom1),
     )
 
     for _ in range(steps_outer):
-        dl_tensor = torch.sub(l_1_tensor, l_0_tensor)
-        dc_tensor = c_1_tensor
+        dl_tensor = l1 - l0
+        dc_tensor = c1
 
-        k_lms_matrix = torch.tensor(
-            [[0.3963377774, 0.2158037573], [-0.1055613458, -0.0638541728], [-0.0894841775, -1.2914855480]]
-        )
-        k_lms_tensor = torch.einsum("tc, cwh -> twh", k_lms_matrix, units_ab_tensor)
-
-        lms_dt_tensor = torch.add(torch.mul(k_lms_tensor, dc_tensor), dl_tensor)
+        # Use precomputed constant
+        k_lms_tensor = torch.einsum("tc, cwh -> twh", _K_LMS_MATRIX, units_ab_tensor)
+        lms_dt_tensor = k_lms_tensor * dc_tensor + dl_tensor
 
         for _ in range(steps):
-            l_tensor = torch.add(
-                torch.mul(l_0_tensor, torch.add(torch.mul(t_tensor, -1.0), 1.0)), torch.mul(t_tensor, l_1_tensor)
-            )
-            c_tensor = torch.mul(t_tensor, c_1_tensor)
+            l_tensor = l0 * (1.0 - t_tensor) + t_tensor * l1
+            c_tensor = t_tensor * c1
+            root_lms_tensor = k_lms_tensor * c_tensor + l_tensor
+            pow3 = root_lms_tensor**3.0
+            pow2 = root_lms_tensor**2.0
+            lms_tensor = pow3
+            lms_dt_tensor_1 = 3.0 * pow2 * lms_dt_tensor
+            lms_dt2_tensor = 6.0 * (lms_dt_tensor**2.0) * root_lms_tensor
 
-            root_lms_tensor = torch.add(torch.mul(k_lms_tensor, c_tensor), l_tensor)
+            # Use precomputed constant
+            rgb_tensor = torch.einsum("qt, twh -> qwh", _RGB_MATRIX, lms_tensor) - 1.0
+            rgb_tensor_1 = torch.einsum("qt, twh -> qwh", _RGB_MATRIX, lms_dt_tensor_1)
+            rgb_tensor_2 = torch.einsum("qt, twh -> qwh", _RGB_MATRIX, lms_dt2_tensor)
 
-            lms_tensor = torch.pow(root_lms_tensor, 3.0)
-            lms_dt_tensor_1 = torch.mul(torch.mul(torch.pow(root_lms_tensor, 2.0), lms_dt_tensor), 3.0)
-            lms_dt2_tensor = torch.mul(torch.mul(torch.pow(lms_dt_tensor, 2.0), root_lms_tensor), 6.0)
+            u_rgb_tensor = rgb_tensor_1 / (rgb_tensor_1**2.0 - 0.5 * rgb_tensor * rgb_tensor_2)
+            t_rgb_tensor = -rgb_tensor * u_rgb_tensor
 
-            rgb_matrix = torch.tensor(
-                [
-                    [4.0767416621, -3.3077115913, 0.2309699292],
-                    [-1.2684380046, 2.6097574011, -0.3413193965],
-                    [-0.0041960863, -0.7034186147, 1.7076147010],
-                ]
-            )
+            max_floats = torch.full_like(t_rgb_tensor, MAX_FLOAT)
 
-            rgb_tensor = torch.sub(torch.einsum("qt, twh -> qwh", rgb_matrix, lms_tensor), 1.0)
-            rgb_tensor_1 = torch.einsum("qt, twh -> qwh", rgb_matrix, lms_dt_tensor_1)
-            rgb_tensor_2 = torch.einsum("qt, twh -> qwh", rgb_matrix, lms_dt2_tensor)
+            t_rgb_tensor = torch.where(u_rgb_tensor < 0.0, max_floats, t_rgb_tensor)
 
-            u_rgb_tensor = torch.div(
-                rgb_tensor_1,
-                torch.sub(torch.pow(rgb_tensor_1, 2.0), torch.mul(torch.mul(rgb_tensor, rgb_tensor_2), 0.5)),
-            )
-
-            t_rgb_tensor = torch.mul(torch.mul(rgb_tensor, -1.0), u_rgb_tensor)
-
-            max_floats = torch.mul(MAX_FLOAT, torch.ones(t_rgb_tensor.shape))
-
-            t_rgb_tensor = torch.where(torch.lt(u_rgb_tensor, 0.0), max_floats, t_rgb_tensor)
-
-            t_tensor = torch.where(
-                torch.gt(cond_tensor, 0.0), torch.add(t_tensor, t_rgb_tensor.min(0).values), t_tensor
-            )
+            t_tensor = torch.where(cond_tensor > 0.0, t_tensor + t_rgb_tensor.min(0).values, t_tensor)
 
     return t_tensor
 
@@ -354,45 +337,41 @@ def gamut_clip_tensor(rgb_l_tensor: torch.Tensor, alpha: float = 0.05, steps: in
 
     lab_tensor = oklab_from_linear_srgb(rgb_l_tensor)
     epsilon = 0.00001
-    chroma_tensor = torch.sqrt(torch.add(torch.pow(lab_tensor[1, :, :], 2.0), torch.pow(lab_tensor[2, :, :], 2.0)))
-    chroma_tensor = torch.where(torch.lt(chroma_tensor, epsilon), epsilon, chroma_tensor)
+    a = lab_tensor[1, :, :]
+    b = lab_tensor[2, :, :]
+    chroma_tensor = torch.sqrt(a**2 + b**2)
+    chroma_tensor = torch.where(chroma_tensor < epsilon, epsilon, chroma_tensor)
 
-    units_ab_tensor = torch.div(lab_tensor[1:, :, :], chroma_tensor)
+    units_ab_tensor = lab_tensor[1:, :, :] / chroma_tensor
 
-    l_d_tensor = torch.sub(lab_tensor[0], 0.5)
-    e_1_tensor = torch.add(torch.add(torch.abs(l_d_tensor), torch.mul(chroma_tensor, alpha)), 0.5)
-    l_0_tensor = torch.mul(
-        torch.add(
-            torch.mul(
-                torch.sign(l_d_tensor),
-                torch.sub(
-                    e_1_tensor, torch.sqrt(torch.sub(torch.pow(e_1_tensor, 2.0), torch.mul(torch.abs(l_d_tensor), 2.0)))
-                ),
-            ),
-            1.0,
-        ),
-        0.5,
-    )
+    l_d_tensor = lab_tensor[0] - 0.5
+    abs_l_d = torch.abs(l_d_tensor)
+    e_1_tensor = abs_l_d + chroma_tensor * alpha + 0.5
+
+    l0_inter = e_1_tensor - torch.sqrt(e_1_tensor**2 - 2.0 * abs_l_d)
+    l_0_tensor = 0.5 * (torch.sign(l_d_tensor) * l0_inter + 1.0)
 
     t_tensor = find_gamut_intersection_tensor(
         units_ab_tensor, lab_tensor[0, :, :], chroma_tensor, l_0_tensor, steps=steps, steps_outer=steps_outer
     )
-    l_clipped_tensor = torch.add(
-        torch.mul(l_0_tensor, torch.add(torch.mul(t_tensor, -1), 1.0)), torch.mul(t_tensor, lab_tensor[0, :, :])
+    l_clipped_tensor = l_0_tensor * (1.0 - t_tensor) + t_tensor * lab_tensor[0, :, :]
+    c_clipped_tensor = t_tensor * chroma_tensor
+
+    out_of_gamut = torch.logical_or(rgb_l_tensor.max(0).values > 1.0, rgb_l_tensor.min(0).values < 0.0)
+
+    clipped = linear_srgb_from_oklab(
+        torch.stack(
+            [
+                l_clipped_tensor,
+                c_clipped_tensor * units_ab_tensor[0, :, :],
+                c_clipped_tensor * units_ab_tensor[1, :, :],
+            ]
+        )
     )
-    c_clipped_tensor = torch.mul(t_tensor, chroma_tensor)
 
     return torch.where(
-        torch.logical_or(torch.gt(rgb_l_tensor.max(0).values, 1.0), torch.lt(rgb_l_tensor.min(0).values, 0.0)),
-        linear_srgb_from_oklab(
-            torch.stack(
-                [
-                    l_clipped_tensor,
-                    torch.mul(c_clipped_tensor, units_ab_tensor[0, :, :]),
-                    torch.mul(c_clipped_tensor, units_ab_tensor[1, :, :]),
-                ]
-            )
-        ),
+        out_of_gamut,
+        clipped,
         rgb_l_tensor,
     )
 
