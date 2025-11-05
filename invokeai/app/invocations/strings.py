@@ -29,22 +29,28 @@ class StringSplitNegInvocation(BaseInvocation):
     string: str = InputField(default="", description="String to split", ui_component=UIComponent.Textarea)
 
     def invoke(self, context: InvocationContext) -> StringPosNegOutput:
-        p_string = ""
-        n_string = ""
+        # Use list for fast concatenation, then join at the end
+        p_chars = []
+        n_chars = []
         brackets_depth = 0
         escaped = False
+        string = self.string or ""
+        append_p = p_chars.append
+        append_n = n_chars.append
 
-        for char in self.string or "":
+        for char in string:
             if char == "[" and not escaped:
-                n_string += " "
+                append_n(" ")
                 brackets_depth += 1
             elif char == "]" and not escaped:
                 brackets_depth -= 1
                 char = " "
             elif brackets_depth > 0:
-                n_string += char
+                append_n(char)
             else:
-                p_string += char
+                append_p(char)
+
+            # keep track of the escape char but only if it isn't escaped already
 
             # keep track of the escape char but only if it isn't escaped already
             if char == "\\" and not escaped:
@@ -52,6 +58,8 @@ class StringSplitNegInvocation(BaseInvocation):
             else:
                 escaped = False
 
+        p_string = "".join(p_chars)
+        n_string = "".join(n_chars)
         return StringPosNegOutput(positive_string=p_string, negative_string=n_string)
 
 
