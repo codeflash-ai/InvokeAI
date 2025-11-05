@@ -1,11 +1,8 @@
 import re
-from typing import (
-    Literal,
-    Self,
-)
+from typing import Literal
 
 from pydantic import Field
-from typing_extensions import Any
+from typing_extensions import Any, Self
 
 from invokeai.backend.model_manager.configs.base import Checkpoint_Config_Base, Config_Base, Diffusers_Config_Base
 from invokeai.backend.model_manager.configs.identification_utils import (
