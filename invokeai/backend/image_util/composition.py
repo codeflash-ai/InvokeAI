@@ -16,6 +16,38 @@ from PIL import Image
 
 from invokeai.backend.stable_diffusion.diffusers_pipeline import image_resized_to_grid_as_tensor
 
+_RGB_K_MATRIX = torch.tensor(
+    [
+        [1.19086277, 1.76576728, 0.59662641, 0.75515197, 0.56771245],
+        [0.73956515, -0.45954494, 0.08285427, 0.12541070, 0.14503204],
+        [1.35733652, -0.00915799, -1.15130210, -0.50559606, 0.00692167],
+    ]
+)
+
+_RGB_W_MATRIX = torch.tensor(
+    [
+        [4.0767416621, -3.3077115913, 0.2309699292],
+        [-1.2684380046, 2.6097574011, -0.3413193965],
+        [-0.0041960863, -0.7034186147, 1.7076147010],
+    ]
+)
+
+_K_LMS_MATRIX = torch.tensor(
+    [[0.3963377774, 0.2158037573], [-0.1055613458, -0.0638541728], [-0.0894841775, -1.2914855480]]
+)
+
+_LMS_MATRIX_1 = torch.tensor(
+    [[1.0, 0.3963377774, 0.2158037573], [1.0, -0.1055613458, -0.0638541728], [1.0, -0.0894841775, -1.2914855480]]
+)
+
+_RGB_MATRIX = torch.tensor(
+    [
+        [4.0767416621, -3.3077115913, 0.2309699292],
+        [-1.2684380046, 2.6097574011, -0.3413193965],
+        [-0.0041960863, -0.7034186147, 1.7076147010],
+    ]
+)
+
 MAX_FLOAT = torch.finfo(torch.tensor(1.0).dtype).max
 
 # CIE Lab to Uniform Perceptual Lab profile is copyright © 2003 Bruce Justin Lindbloom. All rights reserved. <http://www.brucelindbloom.com>
@@ -82,95 +114,64 @@ def linear_srgb_from_srgb(srgb_tensor: torch.Tensor):
 def max_srgb_saturation_tensor(units_ab_tensor: torch.Tensor, steps: int = 1):
     """Compute maximum sRGB saturation of a tensor of Oklab ab unit vectors"""
 
-    rgb_k_matrix = torch.tensor(
-        [
-            [1.19086277, 1.76576728, 0.59662641, 0.75515197, 0.56771245],
-            [0.73956515, -0.45954494, 0.08285427, 0.12541070, 0.14503204],
-            [1.35733652, -0.00915799, -1.15130210, -0.50559606, 0.00692167],
-        ]
-    )
+    # Calculate the "cond_r_tensor" and "cond_g_tensor" in-place as much as possible
+    a = units_ab_tensor[0]
+    b = units_ab_tensor[1]
+    cond_r_tensor = -1.88170328 * a + -0.80936493 * b
+    cond_g_tensor = 1.81444104 * a + -1.19445276 * b
 
-    rgb_w_matrix = torch.tensor(
-        [
-            [4.0767416621, -3.3077115913, 0.2309699292],
-            [-1.2684380046, 2.6097574011, -0.3413193965],
-            [-0.0041960863, -0.7034186147, 1.7076147010],
-        ]
-    )
+    # Stack the terms for einsum
+    ones = torch.ones_like(a)
+    a2 = a**2
+    ab = a * b
+    terms_tensor = torch.stack([ones, a, b, a2, ab])
 
-    cond_r_tensor = torch.add(
-        torch.mul(-1.88170328, units_ab_tensor[0, :, :]), torch.mul(-0.80936493, units_ab_tensor[1, :, :])
-    )
-    cond_g_tensor = torch.add(
-        torch.mul(1.81444104, units_ab_tensor[0, :, :]), torch.mul(-1.19445276, units_ab_tensor[1, :, :])
-    )
+    # Make selection mask once for improved performance
+    cond_r_mask = cond_r_tensor > 1.0
+    cond_g_mask = cond_g_tensor > 1.0
 
-    terms_tensor = torch.stack(
-        [
-            torch.ones(units_ab_tensor.shape[1:]),
-            units_ab_tensor[0, :, :],
-            units_ab_tensor[1, :, :],
-            torch.pow(units_ab_tensor[0, :, :], 2.0),
-            torch.mul(units_ab_tensor[0, :, :], units_ab_tensor[1, :, :]),
-        ]
-    )
+    # Prepare perform einsum for all possibilities and gather.
+    s0 = torch.einsum("twh, t -> wh", terms_tensor, _RGB_K_MATRIX[0])
+    s1 = torch.einsum("twh, t -> wh", terms_tensor, _RGB_K_MATRIX[1])
+    s2 = torch.einsum("twh, t -> wh", terms_tensor, _RGB_K_MATRIX[2])
 
-    s_tensor = torch.empty(units_ab_tensor.shape[1:])
-    s_tensor = torch.where(
-        torch.gt(cond_r_tensor, 1.0),
-        torch.einsum("twh, t -> wh", terms_tensor, rgb_k_matrix[0]),
-        torch.where(
-            torch.gt(cond_g_tensor, 1.0),
-            torch.einsum("twh, t -> wh", terms_tensor, rgb_k_matrix[1]),
-            torch.einsum("twh, t -> wh", terms_tensor, rgb_k_matrix[2]),
-        ),
-    )
+    # Avoid nested where for better performance.
+    s_tensor = torch.where(cond_r_mask, s0, torch.where(cond_g_mask, s1, s2))
 
-    k_lms_matrix = torch.tensor(
-        [[0.3963377774, 0.2158037573], [-0.1055613458, -0.0638541728], [-0.0894841775, -1.2914855480]]
-    )
-
-    k_lms_tensor = torch.einsum("tc, cwh -> twh", k_lms_matrix, units_ab_tensor)
+    # k_lms_tensor shape: (3, w, h)
+    k_lms_tensor = torch.einsum("tc, cwh -> twh", _K_LMS_MATRIX, units_ab_tensor)
 
     for _ in range(steps):
-        root_lms_tensor = torch.add(torch.mul(k_lms_tensor, s_tensor), 1.0)
-        lms_tensor = torch.pow(root_lms_tensor, 3.0)
-        lms_ds_tensor = torch.mul(torch.mul(k_lms_tensor, torch.pow(root_lms_tensor, 2.0)), 3.0)
-        lms_ds2_tensor = torch.mul(torch.mul(torch.pow(k_lms_tensor, 2.0), root_lms_tensor), 6.0)
+        root_lms_tensor = k_lms_tensor * s_tensor + 1.0
+        lms_tensor = root_lms_tensor**3
+        lms_ds_tensor = k_lms_tensor * (root_lms_tensor**2) * 3.0
+        lms_ds2_tensor = (k_lms_tensor**2) * root_lms_tensor * 6.0
+
+        # Prepare masks just once for all three
+        # (broadcasting of cond_*_mask is correct as all are (w,h) and match output)
+        lms_einsum0 = lambda t: torch.einsum("c, cwh -> wh", _RGB_W_MATRIX[0], t)
+        lms_einsum1 = lambda t: torch.einsum("c, cwh -> wh", _RGB_W_MATRIX[1], t)
+        lms_einsum2 = lambda t: torch.einsum("c, cwh -> wh", _RGB_W_MATRIX[2], t)
+
         f_tensor = torch.where(
-            torch.gt(cond_r_tensor, 1.0),
-            torch.einsum("c, cwh -> wh", rgb_w_matrix[0], lms_tensor),
-            torch.where(
-                torch.gt(cond_g_tensor, 1.0),
-                torch.einsum("c, cwh -> wh", rgb_w_matrix[1], lms_tensor),
-                torch.einsum("c, cwh -> wh", rgb_w_matrix[2], lms_tensor),
-            ),
+            cond_r_mask,
+            lms_einsum0(lms_tensor),
+            torch.where(cond_g_mask, lms_einsum1(lms_tensor), lms_einsum2(lms_tensor)),
         )
         f_tensor_1 = torch.where(
-            torch.gt(cond_r_tensor, 1.0),
-            torch.einsum("c, cwh -> wh", rgb_w_matrix[0], lms_ds_tensor),
-            torch.where(
-                torch.gt(cond_g_tensor, 1.0),
-                torch.einsum("c, cwh -> wh", rgb_w_matrix[1], lms_ds_tensor),
-                torch.einsum("c, cwh -> wh", rgb_w_matrix[2], lms_ds_tensor),
-            ),
+            cond_r_mask,
+            lms_einsum0(lms_ds_tensor),
+            torch.where(cond_g_mask, lms_einsum1(lms_ds_tensor), lms_einsum2(lms_ds_tensor)),
         )
         f_tensor_2 = torch.where(
-            torch.gt(cond_r_tensor, 1.0),
-            torch.einsum("c, cwh -> wh", rgb_w_matrix[0], lms_ds2_tensor),
-            torch.where(
-                torch.gt(cond_g_tensor, 1.0),
-                torch.einsum("c, cwh -> wh", rgb_w_matrix[1], lms_ds2_tensor),
-                torch.einsum("c, cwh -> wh", rgb_w_matrix[2], lms_ds2_tensor),
-            ),
+            cond_r_mask,
+            lms_einsum0(lms_ds2_tensor),
+            torch.where(cond_g_mask, lms_einsum1(lms_ds2_tensor), lms_einsum2(lms_ds2_tensor)),
         )
-        s_tensor = torch.sub(
-            s_tensor,
-            torch.div(
-                torch.mul(f_tensor, f_tensor_1),
-                torch.sub(torch.pow(f_tensor_1, 2.0), torch.mul(torch.mul(f_tensor, f_tensor_2), 0.5)),
-            ),
-        )
+
+        numerator = f_tensor * f_tensor_1
+        denominator = (f_tensor_1**2) - 0.5 * f_tensor * f_tensor_2
+        s_tensor = s_tensor - numerator / denominator
 
     return s_tensor
 
@@ -179,23 +180,11 @@ def linear_srgb_from_oklab(oklab_tensor: torch.Tensor):
     """Get linear-light sRGB from an Oklab image tensor"""
 
     # L*a*b* to LMS
-    lms_matrix_1 = torch.tensor(
-        [[1.0, 0.3963377774, 0.2158037573], [1.0, -0.1055613458, -0.0638541728], [1.0, -0.0894841775, -1.2914855480]]
-    )
-
-    lms_tensor_1 = torch.einsum("lwh, kl -> kwh", oklab_tensor, lms_matrix_1)
-    lms_tensor = torch.pow(lms_tensor_1, 3.0)
+    lms_tensor_1 = torch.einsum("lwh, kl -> kwh", oklab_tensor, _LMS_MATRIX_1)
+    lms_tensor = lms_tensor_1**3
 
     # LMS to linear RGB
-    rgb_matrix = torch.tensor(
-        [
-            [4.0767416621, -3.3077115913, 0.2309699292],
-            [-1.2684380046, 2.6097574011, -0.3413193965],
-            [-0.0041960863, -0.7034186147, 1.7076147010],
-        ]
-    )
-
-    linear_srgb_tensor = torch.einsum("kwh, sk -> swh", lms_tensor, rgb_matrix)
+    linear_srgb_tensor = torch.einsum("kwh, sk -> swh", lms_tensor, _RGB_MATRIX)
 
     return linear_srgb_tensor
 
@@ -239,16 +228,15 @@ def find_cusp_tensor(units_ab_tensor: torch.Tensor, steps: int = 1):
 
     oklab_tensor = torch.stack(
         [
-            torch.ones(s_cusp_tensor.shape),
-            torch.mul(s_cusp_tensor, units_ab_tensor[0, :, :]),
-            torch.mul(s_cusp_tensor, units_ab_tensor[1, :, :]),
+            torch.ones_like(s_cusp_tensor),
+            s_cusp_tensor * units_ab_tensor[0],
+            s_cusp_tensor * units_ab_tensor[1],
         ]
     )
 
     rgb_at_max_tensor = linear_srgb_from_oklab(oklab_tensor)
-
-    l_cusp_tensor = torch.pow(torch.div(1.0, rgb_at_max_tensor.max(0).values), 1.0 / 3.0)
-    c_cusp_tensor = torch.mul(l_cusp_tensor, s_cusp_tensor)
+    l_cusp_tensor = torch.pow(1.0 / rgb_at_max_tensor.max(0).values, 1.0 / 3.0)
+    c_cusp_tensor = l_cusp_tensor * s_cusp_tensor
 
     return torch.stack([l_cusp_tensor, c_cusp_tensor])
 
