@@ -34,10 +34,9 @@ class RectifiedFlowInpaintExtension:
 
         # We use a small epsilon to avoid any potential issues with floating point precision.
         eps = 1e-4
-        mask = torch.where(self._inpaint_mask >= t_prev + eps, 1.0, 0.0).to(
-            dtype=self._inpaint_mask.dtype, device=self._inpaint_mask.device
-        )
-
+        mask = torch.empty_like(self._inpaint_mask)
+        torch.ge(self._inpaint_mask, t_prev + eps, out=mask)
+        mask = mask.to(self._inpaint_mask.dtype)
         return mask
 
     def merge_intermediate_latents_with_init_latents(
