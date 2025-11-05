@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -244,15 +245,13 @@ class EmbedMaxDct(object):
         return cv2.idct(np.dot(u, np.dot(np.diag(s), v)))
 
     def infer_dct_svd(self, block, scale):
-        u, s, v = np.linalg.svd(cv2.dct(block))
-
-        score = 0
-        score = int((s[0] % scale) > scale * 0.5)
+        # Compute the DCT and its singular values in a memory-efficient manner
+        dct_block = cv2.dct(block)
+        # Only need the singular values (no need for U/V)
+        s = np.linalg.svd(dct_block, compute_uv=False)
+        # Fast score calculation: % and comparison
+        score = int((s[0] % scale) > (scale * 0.5))
         return score
-        if score >= 0.5:
-            return 1.0
-        else:
-            return 0.0
 
     def diffuse_dct_matrix(self, block, wmBit, scale):
         pos = np.argmax(abs(block.flatten()[1:])) + 1
