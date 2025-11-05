@@ -1,11 +1,8 @@
 import re
-from typing import (
-    Literal,
-    Self,
-)
+from typing import Literal
 
 from pydantic import Field
-from typing_extensions import Any
+from typing_extensions import Any, Self
 
 from invokeai.backend.model_manager.configs.base import Checkpoint_Config_Base, Config_Base, Diffusers_Config_Base
 from invokeai.backend.model_manager.configs.identification_utils import (
@@ -73,8 +70,17 @@ class VAE_Checkpoint_Config_Base(Checkpoint_Config_Base):
     @classmethod
     def _get_base_or_raise(cls, mod: ModelOnDisk) -> BaseModelType:
         # Heuristic: VAEs of all architectures have a similar structure; the best we can do is guess based on name
-        for regexp, base in REGEX_TO_BASE.items():
-            if re.search(regexp, mod.path.name, re.IGNORECASE):
+
+        # Pre-compile regex patterns once for all REGEX_TO_BASE entries
+        # Compile once, share for each call (static attribute on the class)
+        precompiled = getattr(cls, "_precompiled_regex_to_base", None)
+        if precompiled is None:
+            precompiled = [(re.compile(pattern, re.IGNORECASE), base) for pattern, base in REGEX_TO_BASE.items()]
+            cls._precompiled_regex_to_base = precompiled
+
+        mod_name = mod.path.name
+        for regexp, base in precompiled:
+            if regexp.search(mod_name):
                 return base
 
         raise NotAMatchError("cannot determine base type")
