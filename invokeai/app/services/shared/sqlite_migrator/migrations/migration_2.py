@@ -112,30 +112,33 @@ class Migration2Callback:
         if not total_image_names:
             return
 
-        self._logger.info(f"Migrating workflows for {total_image_names} images")
+        logger_info = self._logger.info
+        logger_warning = self._logger.warning
+        image_files_get = self._image_files.get
+
+        logger_info(f"Migrating workflows for {total_image_names} images")
 
         # Migrate the images
         to_migrate: list[tuple[bool, str]] = []
         pbar = tqdm(image_names)
-        for idx, image_name in enumerate(pbar):
-            pbar.set_description(f"Checking image {idx + 1}/{total_image_names} for workflow")
+        for image_name in pbar:
             try:
-                pil_image = self._image_files.get(image_name)
+                pil_image = image_files_get(image_name)
             except ImageFileNotFoundException:
-                self._logger.warning(f"Image {image_name} not found, skipping")
+                logger_warning(f"Image {image_name} not found, skipping")
                 continue
             except Exception as e:
-                self._logger.warning(f"Error while checking image {image_name}, skipping: {e}")
+                logger_warning(f"Error while checking image {image_name}, skipping: {e}")
                 continue
             if "invokeai_workflow" in pil_image.info:
                 try:
-                    UnsafeWorkflowWithVersionValidator.validate_json(pil_image.info.get("invokeai_workflow", ""))
+                    UnsafeWorkflowWithVersionValidator.validate_json(pil_image.info["invokeai_workflow"])
                 except ValidationError:
-                    self._logger.warning(f"Image {image_name} has invalid embedded workflow, skipping")
+                    logger_warning(f"Image {image_name} has invalid embedded workflow, skipping")
                     continue
                 to_migrate.append((True, image_name))
 
-        self._logger.info(f"Adding {len(to_migrate)} embedded workflows to database")
+        logger_info(f"Adding {len(to_migrate)} embedded workflows to database")
         cursor.executemany("UPDATE images SET has_workflow = ? WHERE image_name = ?", to_migrate)
 
 
