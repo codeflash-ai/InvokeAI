@@ -14,6 +14,8 @@ from invokeai.app.services.download import (
     UnknownJobIDException,
 )
 
+NO_CONTENT_RESPONSE = Response(status_code=204)
+
 download_queue_router = APIRouter(prefix="/v1/download_queue", tags=["download_queue"])
 
 
@@ -39,7 +41,7 @@ async def prune_downloads() -> Response:
     """Prune completed and errored jobs."""
     queue = ApiDependencies.invoker.services.download_queue
     queue.prune_jobs()
-    return Response(status_code=204)
+    return NO_CONTENT_RESPONSE
 
 
 @download_queue_router.post(
