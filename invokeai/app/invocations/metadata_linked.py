@@ -208,16 +208,20 @@ def extract_model_key(
     """
 
     if label in metadata:
-        if "key" in metadata[label]:
-            if context.models.exists(metadata[label]["key"]):
-                return metadata[label]["key"]
-        if "name" in metadata[label]:
-            search_model = context.models.search_by_attrs(name=metadata[label]["name"], type=model_type)
-            if len(search_model) > 0:
+        data = metadata[label]
+        if "key" in data:
+            key_candidate = data["key"]
+            if context.models.exists(key_candidate):
+                return key_candidate
+        elif "name" in data:
+            name_candidate = data["name"]
+            search_model = context.models.search_by_attrs(name=name_candidate, type=model_type)
+            if search_model:
                 return search_model[0].key
-        if "model_name" in metadata[label]:
-            search_model = context.models.search_by_attrs(name=metadata[label]["model_name"], type=model_type)
-            if len(search_model) > 0:
+        elif "model_name" in data:
+            model_name_candidate = data["model_name"]
+            search_model = context.models.search_by_attrs(name=model_name_candidate, type=model_type)
+            if search_model:
                 return search_model[0].key
 
     return default_key
