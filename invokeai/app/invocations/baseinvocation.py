@@ -368,7 +368,12 @@ class InvocationRegistry:
     @classmethod
     def get_invocation_for_type(cls, invocation_type: str) -> type[BaseInvocation] | None:
         """Gets the invocation class for a given invocation type."""
-        return cls.get_invocations_map().get(invocation_type)
+        # Optimize by avoiding recomputation of the whole map if just one lookup is needed
+        # Scan for the type directly from invocation_classes rather than building the entire dictionary
+        for inv_class in cls.get_invocation_classes():
+            if inv_class.get_type() == invocation_type:
+                return inv_class
+        return None
 
     @classmethod
     def register_output(cls, output: "type[TBaseInvocationOutput]") -> None:
