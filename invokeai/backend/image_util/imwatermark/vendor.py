@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -255,7 +256,7 @@ class EmbedMaxDct(object):
             return 0.0
 
     def diffuse_dct_matrix(self, block, wmBit, scale):
-        pos = np.argmax(abs(block.flatten()[1:])) + 1
+        pos = np.argmax(np.abs(block.ravel()[1:])) + 1
         i, j = pos // self._block, pos % self._block
         val = block[i][j]
         if val >= 0.0:
