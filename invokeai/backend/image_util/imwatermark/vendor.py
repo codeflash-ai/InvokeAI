@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -223,17 +224,23 @@ class EmbedMaxDct(object):
         (row, col) = frame.shape
         num = 0
 
-        for i in range(row // self._block):
-            for j in range(col // self._block):
-                block = frame[
-                    i * self._block : i * self._block + self._block, j * self._block : j * self._block + self._block
-                ]
+        # Precompute indices of blocks; outer loop unroll; process inner in a lower-level manner
+        block = self._block
+        wmLen = self._wmLen
 
-                score = self.infer_dct_matrix(block, scale)
-                # score = self.infer_dct_svd(block, scale)
-                wmBit = num % self._wmLen
-                scores[wmBit].append(score)
-                num = num + 1
+        # Eliminate attribute lookup in inner loop, use locals
+        for i in range(row // block):
+            i0 = i * block
+            i1 = i0 + block
+            for j in range(col // block):
+                j0 = j * block
+                j1 = j0 + block
+                blk = frame[i0:i1, j0:j1]
+
+                # Use local infer_dct_matrix and append
+                score = self.infer_dct_matrix(blk, scale)
+                scores[num % wmLen].append(score)
+                num += 1
 
         return scores
 
@@ -266,12 +273,14 @@ class EmbedMaxDct(object):
         return block
 
     def infer_dct_matrix(self, block, scale):
-        pos = np.argmax(abs(block.flatten()[1:])) + 1
-        i, j = pos // self._block, pos % self._block
+        # Use flatten in C-order, skip first element, use argmax+1
+        arr = block.ravel()  # Slightly faster than flatten()
+        pos = np.argmax(np.abs(arr[1:])) + 1
+        i, j = divmod(pos, self._block)
 
         val = block[i][j]
         if val < 0:
-            val = abs(val)
+            val = -val
 
         if (val % scale) > 0.5 * scale:
             return 1
