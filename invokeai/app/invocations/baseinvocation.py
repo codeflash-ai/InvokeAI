@@ -342,15 +342,26 @@ class InvocationRegistry:
     def get_invocation_classes(cls) -> Iterable[type[BaseInvocation]]:
         """Gets all invocations, respecting the allowlist and denylist."""
         app_config = get_config()
+
+        # Convert lists to sets for O(1) membership checking
+        allow_set = None
+        if isinstance(app_config.allow_nodes, list):
+            allow_set = set(app_config.allow_nodes)
+        deny_set = None
+        if isinstance(app_config.deny_nodes, list):
+            deny_set = set(app_config.deny_nodes)
+
         allowed_invocations: set[type[BaseInvocation]] = set()
+
+        # Fast path: No allow/deny lists defined (default case)
+        if allow_set is None and deny_set is None:
+            allowed_invocations.update(cls._invocation_classes)
+            return allowed_invocations
+
         for sc in cls._invocation_classes:
             invocation_type = sc.get_type()
-            is_in_allowlist = (
-                invocation_type in app_config.allow_nodes if isinstance(app_config.allow_nodes, list) else True
-            )
-            is_in_denylist = (
-                invocation_type in app_config.deny_nodes if isinstance(app_config.deny_nodes, list) else False
-            )
+            is_in_allowlist = True if allow_set is None else invocation_type in allow_set
+            is_in_denylist = False if deny_set is None else invocation_type in deny_set
             if is_in_allowlist and not is_in_denylist:
                 allowed_invocations.add(sc)
         return allowed_invocations
