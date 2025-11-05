@@ -166,22 +166,22 @@ async def delete_image(
 ) -> DeleteImagesResult:
     """Deletes an image"""
 
-    deleted_images: set[str] = set()
-    affected_boards: set[str] = set()
+    deleted_images: list[str] = []
+    affected_boards: list[str] = []
 
     try:
         image_dto = ApiDependencies.invoker.services.images.get_dto(image_name)
         board_id = image_dto.board_id or "none"
         ApiDependencies.invoker.services.images.delete(image_name)
-        deleted_images.add(image_name)
-        affected_boards.add(board_id)
+        deleted_images.append(image_name)
+        affected_boards.append(board_id)
     except Exception:
         # TODO: Does this need any exception handling at all?
         pass
 
     return DeleteImagesResult(
-        deleted_images=list(deleted_images),
-        affected_boards=list(affected_boards),
+        deleted_images=deleted_images,
+        affected_boards=affected_boards,
     )
 
 
