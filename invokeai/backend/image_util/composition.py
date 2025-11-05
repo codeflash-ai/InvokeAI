@@ -71,10 +71,12 @@ def srgb_from_linear_srgb(linear_srgb_tensor: torch.Tensor, alpha: float = 0.0, 
 def linear_srgb_from_srgb(srgb_tensor: torch.Tensor):
     """Get linear-light sRGB from a standard gamma-corrected sRGB image tensor"""
 
-    linear_srgb_tensor = torch.pow(torch.div(torch.add(srgb_tensor, 0.055), 1.055), 2.4)
-    linear_srgb_tensor_1 = torch.div(srgb_tensor, 12.92)
-    mask = torch.le(srgb_tensor, 0.0404482362771082)
-    linear_srgb_tensor[mask] = linear_srgb_tensor_1[mask]
+    # Avoid creating intermediate tensors and use torch.where for efficient elementwise op
+    threshold = 0.0404482362771082
+    # Compute both branches up front, let torch.where combine efficiently
+    linear_part = srgb_tensor / 12.92
+    nonlinear_part = torch.pow((srgb_tensor + 0.055) / 1.055, 2.4)
+    linear_srgb_tensor = torch.where(srgb_tensor <= threshold, linear_part, nonlinear_part)
 
     return linear_srgb_tensor
 
