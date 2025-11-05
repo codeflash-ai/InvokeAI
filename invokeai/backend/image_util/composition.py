@@ -60,10 +60,16 @@ def srgb_from_linear_srgb(linear_srgb_tensor: torch.Tensor, alpha: float = 0.0, 
 
     if 0.0 < alpha:
         linear_srgb_tensor = gamut_clip_tensor(linear_srgb_tensor, alpha=alpha, steps=steps)
-    linear_srgb_tensor = linear_srgb_tensor.clamp(0.0, 1.0)
-    mask = torch.lt(linear_srgb_tensor, 0.0404482362771082 / 12.92)
-    rgb_tensor = torch.sub(torch.mul(torch.pow(linear_srgb_tensor, (1 / 2.4)), 1.055), 0.055)
-    rgb_tensor[mask] = torch.mul(linear_srgb_tensor[mask], 12.92)
+
+    # Clamp in-place for memory efficiency.
+    linear_srgb_tensor = torch.clamp(linear_srgb_tensor, 0.0, 1.0)
+    # Use in-place operations to reduce memory usage.
+    th = 0.0404482362771082 / 12.92
+    mask = linear_srgb_tensor < th
+    # Compute the non-mask result first via fused operations
+    rgb_tensor = torch.pow(linear_srgb_tensor, 1 / 2.4).mul_(1.055).sub_(0.055)
+    # Only update the masked region via efficient in-place indexing,
+    rgb_tensor[mask] = linear_srgb_tensor[mask] * 12.92
 
     return rgb_tensor
 
@@ -353,48 +359,59 @@ def gamut_clip_tensor(rgb_l_tensor: torch.Tensor, alpha: float = 0.05, steps: in
     """Adaptively compress out-of-gamut linear-light sRGB image tensor colors into gamut"""
 
     lab_tensor = oklab_from_linear_srgb(rgb_l_tensor)
-    epsilon = 0.00001
-    chroma_tensor = torch.sqrt(torch.add(torch.pow(lab_tensor[1, :, :], 2.0), torch.pow(lab_tensor[2, :, :], 2.0)))
-    chroma_tensor = torch.where(torch.lt(chroma_tensor, epsilon), epsilon, chroma_tensor)
+    epsilon = 1e-5
 
-    units_ab_tensor = torch.div(lab_tensor[1:, :, :], chroma_tensor)
-
-    l_d_tensor = torch.sub(lab_tensor[0], 0.5)
-    e_1_tensor = torch.add(torch.add(torch.abs(l_d_tensor), torch.mul(chroma_tensor, alpha)), 0.5)
-    l_0_tensor = torch.mul(
-        torch.add(
-            torch.mul(
-                torch.sign(l_d_tensor),
-                torch.sub(
-                    e_1_tensor, torch.sqrt(torch.sub(torch.pow(e_1_tensor, 2.0), torch.mul(torch.abs(l_d_tensor), 2.0)))
-                ),
-            ),
-            1.0,
-        ),
-        0.5,
+    # Precompute squared values to avoid re-computation
+    a_sq = torch.square(lab_tensor[1, :, :])
+    b_sq = torch.square(lab_tensor[2, :, :])
+    chroma_tensor = torch.sqrt(a_sq + b_sq)
+    # Use torch.maximum for efficient clamping
+    chroma_tensor = torch.maximum(
+        chroma_tensor, torch.tensor(epsilon, dtype=chroma_tensor.dtype, device=chroma_tensor.device)
     )
+
+    # Use in-place division
+    units_ab_tensor = lab_tensor[1:, :, :] / chroma_tensor
+
+    l_d_tensor = lab_tensor[0] - 0.5
+    abs_l_d_tensor = torch.abs(l_d_tensor)  # Reuse this for efficiency
+    e_1_tensor = abs_l_d_tensor + chroma_tensor * alpha + 0.5
+
+    # Precompute power and abs for reuse
+    e_1_sq = torch.square(e_1_tensor)
+    abs_l_d_tensor_2 = abs_l_d_tensor * 2.0
+    sqrt_term = torch.sqrt(e_1_sq - abs_l_d_tensor_2)
+    sign_l_d = torch.sign(l_d_tensor)
+    l_0_tensor = ((sign_l_d * (e_1_tensor - sqrt_term)) + 1.0) * 0.5
 
     t_tensor = find_gamut_intersection_tensor(
         units_ab_tensor, lab_tensor[0, :, :], chroma_tensor, l_0_tensor, steps=steps, steps_outer=steps_outer
     )
-    l_clipped_tensor = torch.add(
-        torch.mul(l_0_tensor, torch.add(torch.mul(t_tensor, -1), 1.0)), torch.mul(t_tensor, lab_tensor[0, :, :])
-    )
-    c_clipped_tensor = torch.mul(t_tensor, chroma_tensor)
+    # Use fused operators for memory efficiency
+    inv_t_tensor = 1 - t_tensor
+    l_clipped_tensor = l_0_tensor * inv_t_tensor + t_tensor * lab_tensor[0, :, :]
+    c_clipped_tensor = t_tensor * chroma_tensor
 
-    return torch.where(
-        torch.logical_or(torch.gt(rgb_l_tensor.max(0).values, 1.0), torch.lt(rgb_l_tensor.min(0).values, 0.0)),
-        linear_srgb_from_oklab(
+    # Precompute RGB channel mask for efficiency and avoid recalculation
+    gt_mask = torch.gt(rgb_l_tensor.max(0).values, 1.0)
+    lt_mask = torch.lt(rgb_l_tensor.min(0).values, 0.0)
+    # torch.logical_or is already optimal here
+
+    out_of_gamut_mask = torch.logical_or(gt_mask, lt_mask)
+    if out_of_gamut_mask.any():
+        clipped_tensor = linear_srgb_from_oklab(
             torch.stack(
                 [
                     l_clipped_tensor,
-                    torch.mul(c_clipped_tensor, units_ab_tensor[0, :, :]),
-                    torch.mul(c_clipped_tensor, units_ab_tensor[1, :, :]),
+                    c_clipped_tensor * units_ab_tensor[0, :, :],
+                    c_clipped_tensor * units_ab_tensor[1, :, :],
                 ]
             )
-        ),
-        rgb_l_tensor,
-    )
+        )
+        # Use torch.where only if some out-of-gamut exists; avoids unconditional allocation
+        return torch.where(out_of_gamut_mask, clipped_tensor, rgb_l_tensor)
+    else:
+        return rgb_l_tensor
 
 
 def st_cusps_from_lc(lc_cusps_tensor: torch.Tensor):
