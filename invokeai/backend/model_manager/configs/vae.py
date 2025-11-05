@@ -1,11 +1,8 @@
 import re
-from typing import (
-    Literal,
-    Self,
-)
+from typing import Literal
 
 from pydantic import Field
-from typing_extensions import Any
+from typing_extensions import Any, Self
 
 from invokeai.backend.model_manager.configs.base import Checkpoint_Config_Base, Config_Base, Diffusers_Config_Base
 from invokeai.backend.model_manager.configs.identification_utils import (
@@ -24,6 +21,8 @@ from invokeai.backend.model_manager.taxonomy import (
     ModelFormat,
     ModelType,
 )
+
+_SDXL_REGEX = re.compile(r"xl\b", re.IGNORECASE)
 
 REGEX_TO_BASE: dict[str, BaseModelType] = {
     r"xl": BaseModelType.StableDiffusionXL,
@@ -141,7 +140,7 @@ class VAE_Diffusers_Config_Base(Diffusers_Config_Base):
         # Heuristic: SD and SDXL VAE are the same shape (3-channel RGB to 4-channel float scaled down
         # by a factor of 8), so we can't necessarily tell them apart by config hyperparameters. Best
         # we can do is guess based on name.
-        return bool(re.search(r"xl\b", override_name or mod.path.name, re.IGNORECASE))
+        return _SDXL_REGEX.search(override_name or mod.path.name) is not None
 
     @classmethod
     def _get_base_or_raise(cls, mod: ModelOnDisk, override_name: str | None = None) -> BaseModelType:
