@@ -400,11 +400,19 @@ def gamut_clip_tensor(rgb_l_tensor: torch.Tensor, alpha: float = 0.05, steps: in
 def st_cusps_from_lc(lc_cusps_tensor: torch.Tensor):
     """Alternative cusp representation with max C as min(S*L, T*(1-L))"""
 
+    # Avoid repeated indexing by storing reference
+    x = lc_cusps_tensor[0]
+    y = lc_cusps_tensor[1]
+
+    # Precompute needed branches in one step, reducing overhead from add/mul ops
+    x_neg = 1 - x
+
+    # Use torch.stack directly on a tuple of results for better memory locality
     return torch.stack(
-        [
-            torch.div(lc_cusps_tensor[1, :, :], lc_cusps_tensor[0, :, :]),
-            torch.div(lc_cusps_tensor[1, :, :], torch.add(torch.mul(lc_cusps_tensor[0, :, :], -1.0), 1)),
-        ]
+        (
+            y / x,
+            y / x_neg,
+        )
     )
 
 
