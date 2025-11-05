@@ -273,10 +273,21 @@ class MetadataItemLinkedInvocation(BaseInvocation, WithMetadata):
         k = self.custom_label if self.label == CUSTOM_LABEL else self.label
         v = self.value.vae if isinstance(self.value, VAEField) else self.value
 
-        data: Dict[str, Any] = {} if self.metadata is None else self.metadata.root
-        data.update({str(k): v})
-        data.update({"app_version": __version__})
+        # If self.metadata is not None, copy its root for mutation;
+        # otherwise, start with a new dict
+        if self.metadata is None:
+            data: Dict[str, Any] = {
+                str(k): v,
+                "app_version": __version__,
+            }
+        else:
+            # To minimize mutations, copy root and insert in two steps,
+            # as MetadataField.model_validate is responsible for further processing.
+            data: Dict[str, Any] = self.metadata.root.copy()
+            data[str(k)] = v
+            data["app_version"] = __version__
 
+        # MetadataField.model_validate is the performance bottleneck, but behavioral preservation requires it.
         return MetadataOutput(metadata=MetadataField.model_validate(data))
 
 
