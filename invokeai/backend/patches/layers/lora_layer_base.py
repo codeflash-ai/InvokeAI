@@ -5,7 +5,7 @@ import torch
 import invokeai.backend.util.logging as logger
 from invokeai.backend.patches.layers.base_layer_patch import BaseLayerPatch
 from invokeai.backend.patches.layers.param_shape_utils import get_param_shape
-from invokeai.backend.util.calc_tensor_size import calc_tensors_size
+from invokeai.backend.util.calc_tensor_size import calc_tensor_size
 
 
 class LoRALayerBase(BaseLayerPatch):
@@ -83,7 +83,10 @@ class LoRALayerBase(BaseLayerPatch):
             )
 
     def calc_size(self) -> int:
-        return calc_tensors_size([self.bias])
+        # Avoids per-call list allocation and iteration in calc_tensors_size
+        if self.bias is not None:
+            return calc_tensor_size(self.bias)
+        return 0
 
     def to(self, device: torch.device | None = None, dtype: torch.dtype | None = None):
         if self.bias is not None:
