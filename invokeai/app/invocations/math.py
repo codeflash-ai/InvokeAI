@@ -1,5 +1,6 @@
 # Copyright (c) 2023 Kyle Schouviller (https://github.com/kyle0654)
 
+from random import uniform
 from typing import Literal
 
 import numpy as np
@@ -89,7 +90,7 @@ class RandomFloatInvocation(BaseInvocation):
     decimals: int = InputField(default=2, description=FieldDescriptions.decimal_places)
 
     def invoke(self, context: InvocationContext) -> FloatOutput:
-        random_float = np.random.uniform(self.low, self.high)
+        random_float = uniform(self.low, self.high)
         rounded_float = round(random_float, self.decimals)
         return FloatOutput(value=rounded_float)
 
