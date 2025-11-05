@@ -49,16 +49,18 @@ class TorchDevice:
     @classmethod
     def choose_torch_device(cls) -> torch.device:
         """Return the torch.device to use for accelerated inference."""
-        app_config = get_config()
-        if app_config.device != "auto":
-            device = torch.device(app_config.device)
-        elif torch.cuda.is_available():
-            device = CUDA_DEVICE
-        elif torch.backends.mps.is_available():
-            device = MPS_DEVICE
-        else:
-            device = CPU_DEVICE
-        return cls.normalize(device)
+        if not hasattr(cls, "_cached_device"):
+            app_config = get_config()
+            if app_config.device != "auto":
+                device = torch.device(app_config.device)
+            elif torch.cuda.is_available():
+                device = CUDA_DEVICE
+            elif torch.backends.mps.is_available():
+                device = MPS_DEVICE
+            else:
+                device = CPU_DEVICE
+            cls._cached_device = cls.normalize(device)
+        return cls._cached_device
 
     @classmethod
     def choose_torch_dtype(cls, device: Optional[torch.device] = None) -> torch.dtype:
