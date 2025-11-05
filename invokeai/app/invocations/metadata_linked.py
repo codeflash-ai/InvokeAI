@@ -1264,10 +1264,23 @@ class MetadataToFloatCollectionInvocation(BaseInvocation, WithMetadata):
     _validate_custom_label = model_validator(mode="after")(validate_custom_label)
 
     def invoke(self, context: InvocationContext) -> FloatCollectionOutput:
-        data: Dict[str, Any] = {} if self.metadata is None else self.metadata.root
-        output = data.get(str(self.custom_label if self.label == CUSTOM_LABEL else self.label), self.default_value)
+        # Inline all logic to avoid temporary allocations and unnecessary str() calls
+        if self.metadata is None:
+            collection = self.default_value
+        else:
+            # Determine the key - avoids creating unnecessary intermediate objects
+            key = self.custom_label if self.label == CUSTOM_LABEL else self.label
+            # If key is already str, avoid double conversion
+            try:
+                # Fast path: only coerce to str if not already str
+                if not isinstance(key, str):
+                    key = str(key)
+            except Exception:
+                key = str(key)
+            collection = self.metadata.root.get(key, self.default_value)
 
-        return FloatCollectionOutput(collection=output)
+        # Directly create the output without intermediate variable
+        return FloatCollectionOutput(collection=collection)
 
 
 @invocation(
