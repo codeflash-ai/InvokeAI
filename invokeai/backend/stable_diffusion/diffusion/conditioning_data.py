@@ -194,8 +194,10 @@ class TextConditioningData:
         self.guidance_rescale_multiplier = guidance_rescale_multiplier
 
     def is_sdxl(self):
-        assert isinstance(self.uncond_text, SDXLConditioningInfo) == isinstance(self.cond_text, SDXLConditioningInfo)
-        return isinstance(self.cond_text, SDXLConditioningInfo)
+        cond_is_sdxl = isinstance(self.cond_text, SDXLConditioningInfo)
+        # Evaluate both conditions only once for minimal overhead
+        assert cond_is_sdxl == isinstance(self.uncond_text, SDXLConditioningInfo)
+        return cond_is_sdxl
 
     def to_unet_kwargs(self, unet_kwargs: UNetKwargs, conditioning_mode: ConditioningMode):
         """Fills unet arguments with data from provided conditionings.
