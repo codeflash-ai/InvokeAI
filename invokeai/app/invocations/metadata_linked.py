@@ -1296,7 +1296,10 @@ class MetadataToBoolCollectionInvocation(BaseInvocation, WithMetadata):
     _validate_custom_label = model_validator(mode="after")(validate_custom_label)
 
     def invoke(self, context: InvocationContext) -> BooleanCollectionOutput:
-        data: Dict[str, Any] = {} if self.metadata is None else self.metadata.root
-        output = data.get(str(self.custom_label if self.label == CUSTOM_LABEL else self.label), self.default_value)
+        if self.metadata is None:
+            output = self.default_value
+        else:
+            data: Dict[str, Any] = self.metadata.root
+            output = data.get(str(self.custom_label if self.label == CUSTOM_LABEL else self.label), self.default_value)
 
         return BooleanCollectionOutput(collection=output)
