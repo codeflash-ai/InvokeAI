@@ -107,12 +107,14 @@ class InvocationStatsService(InvocationStatsServiceBase):
                 f"Attempted to get model cache statistics for unknown graph {graph_execution_state_id}: {e}."
             ) from e
 
+        # Optimize: avoid creating an intermediate list for values, use values view directly in sum()
+        total_usage_bytes = sum(cache_stats.loaded_model_sizes.values())
         return ModelCacheStatsSummary(
             cache_hits=cache_stats.hits,
             cache_misses=cache_stats.misses,
             high_water_mark_gb=cache_stats.high_watermark / GB,
             cache_size_gb=cache_stats.cache_size / GB,
-            total_usage_gb=sum(list(cache_stats.loaded_model_sizes.values())) / GB,
+            total_usage_gb=total_usage_bytes / GB,
             models_cached=cache_stats.in_cache,
             models_cleared=cache_stats.cleared,
         )
