@@ -328,9 +328,15 @@ class MetadataToStringInvocation(BaseInvocation, WithMetadata):
     _validate_custom_label = model_validator(mode="after")(validate_custom_label)
 
     def invoke(self, context: InvocationContext) -> StringOutput:
-        data: Dict[str, Any] = {} if self.metadata is None else self.metadata.root
-        output = data.get(str(self.custom_label if self.label == CUSTOM_LABEL else self.label), self.default_value)
-
+        # Fast path: avoid dict allocation if metadata is None and default_value is always str
+        meta = self.metadata
+        key = str(self.custom_label) if self.label == CUSTOM_LABEL else str(self.label)
+        # Avoid constructing empty dict if metadata is None - just return default early
+        if meta is None:
+            return StringOutput(value=str(self.default_value))
+        data: Dict[str, Any] = meta.root
+        # No need to allocate new string for key if already str, but str() is fast and safe
+        output = data.get(key, self.default_value)
         return StringOutput(value=str(output))
 
 
