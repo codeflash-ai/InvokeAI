@@ -63,7 +63,7 @@ class AddsMaskGuidance:
 
 
 def trim_to_multiple_of(*args, multiple_of=8):
-    return tuple((x - x % multiple_of) for x in args)
+    return tuple([x - x % multiple_of for x in args])
 
 
 def image_resized_to_grid_as_tensor(image: PIL.Image.Image, normalize: bool = True, multiple_of=8) -> torch.FloatTensor:
