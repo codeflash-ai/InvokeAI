@@ -70,7 +70,11 @@ class RandomIntInvocation(BaseInvocation):
     high: int = InputField(default=np.iinfo(np.int32).max, description=FieldDescriptions.exclusive_high)
 
     def invoke(self, context: InvocationContext) -> IntegerOutput:
-        return IntegerOutput(value=np.random.randint(self.low, self.high))
+        # Use the built-in random module for better performance than numpy for single integer generation
+        # Numpy's randint is optimized for large arrays, so for a single random integer, Python's random is faster
+        from random import randint
+
+        return IntegerOutput(value=randint(self.low, self.high - 1))
 
 
 @invocation(
