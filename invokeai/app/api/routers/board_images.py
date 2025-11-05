@@ -119,16 +119,17 @@ async def remove_images_from_board(
     image_names: list[str] = Body(description="The names of the images to remove", embed=True),
 ) -> RemoveImagesFromBoardResult:
     """Removes a list of images from their board, if they had one"""
+    removed_images: set[str] = set()
+    affected_boards: set[str] = set()
     try:
-        removed_images: set[str] = set()
-        affected_boards: set[str] = set()
         for image_name in image_names:
             try:
-                old_board_id = ApiDependencies.invoker.services.images.get_dto(image_name).board_id or "none"
+                image_dto = ApiDependencies.invoker.services.images.get_dto(image_name)
+                old_board_id = image_dto.board_id or "none"
                 ApiDependencies.invoker.services.board_images.remove_image_from_board(image_name=image_name)
                 removed_images.add(image_name)
-                affected_boards.add("none")
                 affected_boards.add(old_board_id)
+                affected_boards.add("none")
             except Exception:
                 pass
         return RemoveImagesFromBoardResult(
