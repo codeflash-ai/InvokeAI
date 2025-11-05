@@ -138,8 +138,9 @@ class InstantXControlNetExtension(BaseControlNetExtension):
         if double_block_samples:
             interval_control = self._flux_transformer_num_double_blocks / len(double_block_samples)
             interval_control = int(math.ceil(interval_control))
-            for i in range(self._flux_transformer_num_double_blocks):
-                double_block_residuals.append(double_block_samples[i // interval_control])
+            double_block_residuals = [
+                double_block_samples[i // interval_control] for i in range(self._flux_transformer_num_double_blocks)
+            ]
 
         # Handle single block residuals.
         single_block_residuals: list[torch.Tensor] = []
@@ -147,8 +148,9 @@ class InstantXControlNetExtension(BaseControlNetExtension):
         if single_block_samples:
             interval_control = self._flux_transformer_num_single_blocks / len(single_block_samples)
             interval_control = int(math.ceil(interval_control))
-            for i in range(self._flux_transformer_num_single_blocks):
-                single_block_residuals.append(single_block_samples[i // interval_control])
+            single_block_residuals = [
+                single_block_samples[i // interval_control] for i in range(self._flux_transformer_num_single_blocks)
+            ]
 
         return ControlNetFluxOutput(
             double_block_residuals=double_block_residuals or None,
