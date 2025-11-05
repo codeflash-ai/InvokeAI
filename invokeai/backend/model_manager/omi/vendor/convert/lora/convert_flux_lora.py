@@ -7,27 +7,22 @@ from invokeai.backend.model_manager.omi.vendor.convert.lora.convert_t5 import ma
 
 
 def __map_double_transformer_block(key_prefix: LoraConversionKeySet) -> list[LoraConversionKeySet]:
-    keys = []
-
-    keys += [LoraConversionKeySet("img_attn.qkv.0", "attn.to_q", parent=key_prefix)]
-    keys += [LoraConversionKeySet("img_attn.qkv.1", "attn.to_k", parent=key_prefix)]
-    keys += [LoraConversionKeySet("img_attn.qkv.2", "attn.to_v", parent=key_prefix)]
-
-    keys += [LoraConversionKeySet("txt_attn.qkv.0", "attn.add_q_proj", parent=key_prefix)]
-    keys += [LoraConversionKeySet("txt_attn.qkv.1", "attn.add_k_proj", parent=key_prefix)]
-    keys += [LoraConversionKeySet("txt_attn.qkv.2", "attn.add_v_proj", parent=key_prefix)]
-
-    keys += [LoraConversionKeySet("img_attn.proj", "attn.to_out.0", parent=key_prefix)]
-    keys += [LoraConversionKeySet("img_mlp.0", "ff.net.0.proj", parent=key_prefix)]
-    keys += [LoraConversionKeySet("img_mlp.2", "ff.net.2", parent=key_prefix)]
-    keys += [LoraConversionKeySet("img_mod.lin", "norm1.linear", parent=key_prefix)]
-
-    keys += [LoraConversionKeySet("txt_attn.proj", "attn.to_add_out", parent=key_prefix)]
-    keys += [LoraConversionKeySet("txt_mlp.0", "ff_context.net.0.proj", parent=key_prefix)]
-    keys += [LoraConversionKeySet("txt_mlp.2", "ff_context.net.2", parent=key_prefix)]
-    keys += [LoraConversionKeySet("txt_mod.lin", "norm1_context.linear", parent=key_prefix)]
-
-    return keys
+    return [
+        LoraConversionKeySet("img_attn.qkv.0", "attn.to_q", parent=key_prefix),
+        LoraConversionKeySet("img_attn.qkv.1", "attn.to_k", parent=key_prefix),
+        LoraConversionKeySet("img_attn.qkv.2", "attn.to_v", parent=key_prefix),
+        LoraConversionKeySet("txt_attn.qkv.0", "attn.add_q_proj", parent=key_prefix),
+        LoraConversionKeySet("txt_attn.qkv.1", "attn.add_k_proj", parent=key_prefix),
+        LoraConversionKeySet("txt_attn.qkv.2", "attn.add_v_proj", parent=key_prefix),
+        LoraConversionKeySet("img_attn.proj", "attn.to_out.0", parent=key_prefix),
+        LoraConversionKeySet("img_mlp.0", "ff.net.0.proj", parent=key_prefix),
+        LoraConversionKeySet("img_mlp.2", "ff.net.2", parent=key_prefix),
+        LoraConversionKeySet("img_mod.lin", "norm1.linear", parent=key_prefix),
+        LoraConversionKeySet("txt_attn.proj", "attn.to_add_out", parent=key_prefix),
+        LoraConversionKeySet("txt_mlp.0", "ff_context.net.0.proj", parent=key_prefix),
+        LoraConversionKeySet("txt_mlp.2", "ff_context.net.2", parent=key_prefix),
+        LoraConversionKeySet("txt_mod.lin", "norm1_context.linear", parent=key_prefix),
+    ]
 
 
 def __map_single_transformer_block(key_prefix: LoraConversionKeySet) -> list[LoraConversionKeySet]:
