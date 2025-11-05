@@ -7,6 +7,9 @@ T = TypeVar("T", bound=torch.nn.Module)
 
 def zero_module(module: T) -> T:
     """Initialize the parameters of a module to zero."""
-    for p in module.parameters():
-        torch.nn.init.zeros_(p)
+    params = list(module.parameters())
+    if params:
+        with torch.no_grad():
+            for p in params:
+                p.zero_()
     return module
