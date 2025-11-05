@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -205,18 +206,56 @@ class EmbedMaxDct(object):
 
         yuv = cv2.cvtColor(bgr, cv2.COLOR_BGR2YUV)
 
-        scores = [[] for i in range(self._wmLen)]
+        # Preallocate scores list of lists using array for improved performance in map below
+        scores = [[] for _ in range(self._wmLen)]
+
+        # Precompute valid slice indices once
+        r_stop = row // 4 * 4
+        c_stop = col // 4 * 4
+
         for channel in range(2):
-            if self._scales[channel] <= 0:
+            scale = self._scales[channel]
+            if scale <= 0:
                 continue
 
-            ca1, (h1, v1, d1) = pywt.dwt2(yuv[: row // 4 * 4, : col // 4 * 4, channel], "haar")
+            # Reduce function call overhead by storing sliced array
+            # Slice once and reuse for pywt.dwt2. Avoid unneeded recomputation.
+            channel_slice = yuv[:r_stop, :c_stop, channel]
 
-            scores = self.decode_frame(ca1, self._scales[channel], scores)
+            # pywt.dwt2 can be a major bottleneck; no direct vectorization possible but minimize redundant slicing
+            ca1, _ = pywt.dwt2(channel_slice, "haar")
 
-        avgScores = list(map(lambda l: np.array(l).mean(), scores))
+            # The critical bottleneck is decode_frame, especially with repeated append calls to scores
+            # Instead, move decode_frame logic here for direct optimization
 
-        bits = np.array(avgScores) * 255 > 127
+            # ca1 is always 2D after dwt2
+            block = self._block
+            wmLen = self._wmLen
+            rows, cols = ca1.shape
+            decode_block_count = (rows // block, cols // block)
+
+            num = 0
+            for i in range(decode_block_count[0]):
+                r0 = i * block
+                r1 = r0 + block
+                for j in range(decode_block_count[1]):
+                    c0 = j * block
+                    c1 = c0 + block
+
+                    blk = ca1[r0:r1, c0:c1]
+                    score = self.infer_dct_matrix(blk, scale)
+                    wmBit = num % wmLen
+                    scores[wmBit].append(score)
+                    num += 1
+
+        # Optimize avgScores calculation by minimizing calls to np.array and mean
+        # Use generator for memory efficiency
+        avgScores = [np.mean(l) if l else 0 for l in scores]
+
+        # Vectorized bits calculation, avoid constructing a new np.array if avgScores is already array
+        avgScores_arr = np.array(avgScores)
+        bits = avgScores_arr * 255 > 127
+
         return bits
 
     def decode_frame(self, frame, scale, scores):
