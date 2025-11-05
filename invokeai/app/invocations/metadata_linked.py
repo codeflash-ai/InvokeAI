@@ -424,8 +424,24 @@ class MetadataToBoolInvocation(BaseInvocation, WithMetadata):
     _validate_custom_label = model_validator(mode="after")(validate_custom_label)
 
     def invoke(self, context: InvocationContext) -> BooleanOutput:
-        data: Dict[str, Any] = {} if self.metadata is None else self.metadata.root
-        output = data.get(str(self.custom_label if self.label == CUSTOM_LABEL else self.label), self.default_value)
+        # Avoid repeated attribute lookups and unnecessary object creations
+        metadata = self.metadata
+        if metadata is None:
+            data: Dict[str, Any] = {}
+        else:
+            data: Dict[str, Any] = metadata.root
+
+        label = self.label
+        if label == CUSTOM_LABEL:
+            lookup_key = str(self.custom_label)
+        else:
+            lookup_key = str(label)
+
+        # Use local variable for default_value for a slightly faster lookup
+        default_value = self.default_value
+
+        # Use get directly on the dictionary
+        output = data.get(lookup_key, default_value)
 
         return BooleanOutput(value=bool(output))
 
