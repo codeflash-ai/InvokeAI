@@ -181,7 +181,8 @@ def validate_custom_label(
     ],
 ):
     if model.label == CUSTOM_LABEL:
-        if model.custom_label is None or model.custom_label.strip() == "":
+        custom_label = model.custom_label
+        if not (custom_label and custom_label.strip()):
             raise ValueError("You must enter a Custom Label")
     return model
 
