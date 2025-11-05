@@ -22,11 +22,8 @@ def FeedForward(dim: int, mult: int = 4):
 def reshape_tensor(x: torch.Tensor, heads: int):
     bs, length, _ = x.shape
     # (bs, length, width) --> (bs, length, n_heads, dim_per_head)
-    x = x.view(bs, length, heads, -1)
     # (bs, length, n_heads, dim_per_head) --> (bs, n_heads, length, dim_per_head)
-    x = x.transpose(1, 2)
-    # (bs, n_heads, length, dim_per_head) --> (bs*n_heads, length, dim_per_head)
-    x = x.reshape(bs, heads, length, -1)
+    x = x.view(bs, length, heads, -1).transpose(1, 2)
     return x
 
 
