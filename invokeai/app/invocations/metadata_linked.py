@@ -1200,8 +1200,15 @@ class MetadataToStringCollectionInvocation(BaseInvocation, WithMetadata):
     _validate_custom_label = model_validator(mode="after")(validate_custom_label)
 
     def invoke(self, context: InvocationContext) -> StringCollectionOutput:
-        data: Dict[str, Any] = {} if self.metadata is None else self.metadata.root
-        output = data.get(str(self.custom_label if self.label == CUSTOM_LABEL else self.label), self.default_value)
+        metadata = self.metadata
+        if metadata is not None:
+            data = metadata.root
+            label = self.custom_label if self.label == CUSTOM_LABEL else self.label
+            # Avoid unnecessary str() conversion since all core labels are already string literals
+            key = label if isinstance(label, str) else str(label)
+            output = data.get(key, self.default_value)
+        else:
+            output = self.default_value
 
         return StringCollectionOutput(collection=output)
 
