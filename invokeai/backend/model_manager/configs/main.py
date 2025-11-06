@@ -1,5 +1,12 @@
 from abc import ABC
-from typing import Any, Literal, Self
+from typing import Any, Literal
+
+from typing_extensions import Self
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -53,16 +60,15 @@ class MainModelDefaultSettings(BaseModel):
 
     @classmethod
     def from_base(cls, base: BaseModelType) -> Self | None:
-        match base:
-            case BaseModelType.StableDiffusion1:
-                return cls(width=512, height=512)
-            case BaseModelType.StableDiffusion2:
-                return cls(width=768, height=768)
-            case BaseModelType.StableDiffusionXL:
-                return cls(width=1024, height=1024)
-            case _:
-                # TODO(psyche): Do we want defaults for other base types?
-                return None
+        if base is BaseModelType.StableDiffusion1:
+            return cls(width=512, height=512)
+        elif base is BaseModelType.StableDiffusion2:
+            return cls(width=768, height=768)
+        elif base is BaseModelType.StableDiffusionXL:
+            return cls(width=1024, height=1024)
+        else:
+            # TODO(psyche): Do we want defaults for other base types?
+            return None
 
 
 class Main_Config_Base(ABC, BaseModel):
