@@ -16,6 +16,8 @@ from PIL import Image
 
 from invokeai.backend.stable_diffusion.diffusers_pipeline import image_resized_to_grid_as_tensor
 
+_conversion_matrix = torch.tensor([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
+
 MAX_FLOAT = torch.finfo(torch.tensor(1.0).dtype).max
 
 # CIE Lab to Uniform Perceptual Lab profile is copyright © 2003 Bruce Justin Lindbloom. All rights reserved. <http://www.brucelindbloom.com>
@@ -841,8 +843,7 @@ def okhsl_from_srgb(rgb_tensor: torch.Tensor, steps: int = 1, steps_outer: int =
 
 
 def xyz_from_srgb(rgb_l_tensor: torch.Tensor):
-    conversion_matrix = torch.tensor([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
-    return torch.einsum("zc, cwh -> zwh", conversion_matrix, rgb_l_tensor)
+    return torch.einsum("zc, cwh -> zwh", _conversion_matrix, rgb_l_tensor)
 
 
 def lab_from_xyz_helper(channel_illuminant_quotient_matrix: torch.Tensor):
