@@ -50,9 +50,11 @@ lvmin_prunings += [np.rot90(x, k=3, axes=(0, 1)) for x in lvmin_prunings_raw]
 
 def remove_pattern(x, kernel):
     objects = cv2.morphologyEx(x, cv2.MORPH_HITMISS, kernel)
-    objects = np.where(objects > 127)
-    x[objects] = 0
-    return x, objects[0].shape[0] > 0
+    mask = objects > 127
+    count = np.count_nonzero(mask)
+    if count:
+        x[mask] = 0
+    return x, count > 0
 
 
 def thin_one_time(x, kernels):
