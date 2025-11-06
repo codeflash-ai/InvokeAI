@@ -86,8 +86,8 @@ class LoRALayer(LoRALayerBase):
 
     def get_weight(self, orig_weight: torch.Tensor) -> torch.Tensor:
         if self.mid is not None:
-            up = self.up.reshape(self.up.shape[0], self.up.shape[1])
-            down = self.down.reshape(self.down.shape[0], self.down.shape[1])
+            up = self.up if self.up.dim() == 2 else self.up.reshape(self.up.shape[0], self.up.shape[1])
+            down = self.down if self.down.dim() == 2 else self.down.reshape(self.down.shape[0], self.down.shape[1])
             weight = torch.einsum("m n w h, i m, n j -> i j w h", self.mid, up, down)
         else:
             # up matrix and down matrix have different ranks so we can't simply multiply them
@@ -95,7 +95,9 @@ class LoRALayer(LoRALayerBase):
                 weight = self.fuse_weights(self.up, self.down)
                 return weight
 
-            weight = self.up.reshape(self.up.shape[0], -1) @ self.down.reshape(self.down.shape[0], -1)
+            up_reshaped = self.up if self.up.dim() == 2 else self.up.reshape(self.up.shape[0], -1)
+            down_reshaped = self.down if self.down.dim() == 2 else self.down.reshape(self.down.shape[0], -1)
+            weight = up_reshaped @ down_reshaped
 
         return weight
 
