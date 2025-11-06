@@ -349,6 +349,9 @@ class ModelsInterface(InvocationContextInterface):
         super().__init__(services, data)
         self._util = util
 
+        # Cache store attribute for faster access
+        self._store = self._services.model_manager.store
+
     def exists(self, identifier: Union[str, "ModelIdentifierField"]) -> bool:
         """Check if a model exists.
 
@@ -430,9 +433,9 @@ class ModelsInterface(InvocationContextInterface):
             The model's config.
         """
         if isinstance(identifier, str):
-            return self._services.model_manager.store.get_model(identifier)
+            return self._store.get_model(identifier)
         else:
-            return self._services.model_manager.store.get_model(identifier.key)
+            return self._store.get_model(identifier.key)
 
     def search_by_path(self, path: Path) -> list[AnyModelConfig]:
         """Search for models by path.
