@@ -110,8 +110,10 @@ class XLabsControlNetExtension(BaseControlNetExtension):
         double_block_residuals: list[torch.Tensor] = []
         xlabs_double_block_residuals = xlabs_output.controlnet_double_block_residuals
         if xlabs_double_block_residuals is not None:
-            for i in range(self._flux_transformer_num_double_blocks):
-                double_block_residuals.append(xlabs_double_block_residuals[i % len(xlabs_double_block_residuals)])
+            length = len(xlabs_double_block_residuals)
+            double_block_residuals = [
+                xlabs_double_block_residuals[i % length] for i in range(self._flux_transformer_num_double_blocks)
+            ]
 
         return ControlNetFluxOutput(
             double_block_residuals=double_block_residuals,
