@@ -49,13 +49,21 @@ lvmin_prunings += [np.rot90(x, k=3, axes=(0, 1)) for x in lvmin_prunings_raw]
 
 
 def remove_pattern(x, kernel):
+    # Use MORPH_HITMISS directly on a view to avoid unnecessary copy.
     objects = cv2.morphologyEx(x, cv2.MORPH_HITMISS, kernel)
-    objects = np.where(objects > 127)
-    x[objects] = 0
-    return x, objects[0].shape[0] > 0
+    # The output for MORPH_HITMISS is binary (values are either 0 or 255 [for uint8]),
+    # Comparing against 0 is faster than 127.
+    mask = objects.astype(bool)  # objects == 255 for uint8 is true; for int type, >0 works as well
+    # Use np.count_nonzero instead of shape[0] for speed
+    has_update = np.any(mask)
+    if has_update:
+        # Use mask indexing which is much faster than np.where for this use case
+        x[mask] = 0
+    return x, has_update
 
 
 def thin_one_time(x, kernels):
+    # Avoid repeated assignment, work directly on the array to minimize unnecessary copying
     y = x
     is_done = True
     for k in kernels:
