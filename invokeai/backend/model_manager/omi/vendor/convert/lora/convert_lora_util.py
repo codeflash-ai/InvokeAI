@@ -170,18 +170,35 @@ def __detect_source(
     state_dict: dict[str, Tensor],
     key_sets: list[LoraConversionKeySet],
 ) -> str:
+    omi_prefixes = [ks.omi_prefix for ks in key_sets if ks.omi_prefix]
+    diffusers_prefixes = [ks.diffusers_prefix for ks in key_sets if ks.diffusers_prefix]
+    legacy_diffusers_prefixes = [ks.legacy_diffusers_prefix for ks in key_sets if ks.legacy_diffusers_prefix]
+
     omi_count = 0
     diffusers_count = 0
     legacy_diffusers_count = 0
 
+    # OPT: Compile prefixes into tuples for fast scanning
+    if omi_prefixes:
+        omi_tuple = tuple(omi_prefixes)
+    else:
+        omi_tuple = ()
+    if diffusers_prefixes:
+        diffusers_tuple = tuple(diffusers_prefixes)
+    else:
+        diffusers_tuple = ()
+    if legacy_diffusers_prefixes:
+        legacy_tuple = tuple(legacy_diffusers_prefixes)
+    else:
+        legacy_tuple = ()
+
     for key in state_dict:
-        for key_set in key_sets:
-            if key.startswith(key_set.omi_prefix):
-                omi_count += 1
-            if key.startswith(key_set.diffusers_prefix):
-                diffusers_count += 1
-            if key.startswith(key_set.legacy_diffusers_prefix):
-                legacy_diffusers_count += 1
+        if omi_tuple and key.startswith(omi_tuple):
+            omi_count += 1
+        if diffusers_tuple and key.startswith(diffusers_tuple):
+            diffusers_count += 1
+        if legacy_tuple and key.startswith(legacy_tuple):
+            legacy_diffusers_count += 1
 
     if omi_count > diffusers_count and omi_count > legacy_diffusers_count:
         return "omi"
