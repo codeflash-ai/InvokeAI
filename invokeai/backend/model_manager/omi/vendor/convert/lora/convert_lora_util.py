@@ -174,14 +174,19 @@ def __detect_source(
     diffusers_count = 0
     legacy_diffusers_count = 0
 
+    # Collect prefix lists to avoid attribute lookup inside inner loop
+    omi_prefixes = tuple([ks.omi_prefix for ks in key_sets])
+    diffusers_prefixes = tuple([ks.diffusers_prefix for ks in key_sets])
+    legacy_diffusers_prefixes = tuple([ks.legacy_diffusers_prefix for ks in key_sets])
+
+    # For large state_dict, str.startswith(tuple) is highly efficient vs nested for-loops
     for key in state_dict:
-        for key_set in key_sets:
-            if key.startswith(key_set.omi_prefix):
-                omi_count += 1
-            if key.startswith(key_set.diffusers_prefix):
-                diffusers_count += 1
-            if key.startswith(key_set.legacy_diffusers_prefix):
-                legacy_diffusers_count += 1
+        if key.startswith(omi_prefixes):
+            omi_count += 1
+        if key.startswith(diffusers_prefixes):
+            diffusers_count += 1
+        if key.startswith(legacy_diffusers_prefixes):
+            legacy_diffusers_count += 1
 
     if omi_count > diffusers_count and omi_count > legacy_diffusers_count:
         return "omi"
