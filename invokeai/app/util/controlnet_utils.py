@@ -112,23 +112,19 @@ def pixel_perfect_resolution(
     """
     raw_H, raw_W, _ = image.shape
 
-    k0 = float(target_H) / float(raw_H)
-    k1 = float(target_W) / float(raw_W)
+    # Avoid unnecessary float conversions
+    k0 = target_H / raw_H
+    k1 = target_W / raw_W
+
+    mHW = raw_H if raw_H < raw_W else raw_W
 
     if resize_mode == "fill_resize":
-        estimation = min(k0, k1) * float(min(raw_H, raw_W))
+        estimation = min(k0, k1) * mHW
     else:  # "crop_resize" or "just_resize" (or possibly "just_resize_simple"?)
-        estimation = max(k0, k1) * float(min(raw_H, raw_W))
+        estimation = max(k0, k1) * mHW
 
-    # print(f"Pixel Perfect Computation:")
-    # print(f"resize_mode = {resize_mode}")
-    # print(f"raw_H = {raw_H}")
-    # print(f"raw_W = {raw_W}")
-    # print(f"target_H = {target_H}")
-    # print(f"target_W = {target_W}")
-    # print(f"estimation = {estimation}")
-
-    return int(np.round(estimation))
+    # np.round is slow; use built-in round, which is much faster for scalars
+    return int(round(estimation))
 
 
 def clone_contiguous(x: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
