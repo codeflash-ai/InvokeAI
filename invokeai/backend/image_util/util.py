@@ -197,7 +197,9 @@ def nms(np_img: np.ndarray, threshold: Optional[int] = None, sigma: Optional[flo
     nms_img = np.zeros_like(np_img)
 
     for f in [filter_1, filter_2, filter_3, filter_4]:
-        np.putmask(nms_img, cv2.dilate(np_img, kernel=f) == np_img, np_img)
+        dilated = cv2.dilate(np_img, kernel=f)
+        mask = dilated == np_img
+        nms_img = np.where(mask, np_img, nms_img)
 
     if sigma is not None and threshold is not None:
         # We blurred - now threshold to get a binary image

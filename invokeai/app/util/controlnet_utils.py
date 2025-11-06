@@ -177,7 +177,14 @@ def heuristic_resize(np_img: np.ndarray[Any, Any], size: tuple[int, int]) -> np.
 
     new_size_is_smaller = (size[0] * size[1]) < (np_img.shape[0] * np_img.shape[1])
     new_size_is_bigger = (size[0] * size[1]) > (np_img.shape[0] * np_img.shape[1])
-    unique_color_count = np.unique(np_img.reshape(-1, np_img.shape[2]), axis=0).shape[0]
+    # Use sampling for very large images for unique color counting for efficiency
+    pixel_count = np_img.shape[0] * np_img.shape[1]
+    if np_img.ndim == 3 and pixel_count > 200000:
+        idx = np.random.choice(pixel_count, min(5000, pixel_count), replace=False)
+        sampled_pixels = np_img.reshape(-1, np_img.shape[2])[idx]
+        unique_color_count = np.unique(sampled_pixels, axis=0).shape[0]
+    else:
+        unique_color_count = np.unique(np_img.reshape(-1, np_img.shape[2]), axis=0).shape[0]
     is_one_pixel_edge = False
     is_binary = False
 
@@ -185,10 +192,11 @@ def heuristic_resize(np_img: np.ndarray[Any, Any], size: tuple[int, int]) -> np.
         # If the image has only two colors, it is likely binary. Check if the image has one-pixel edges.
         is_binary = np.min(np_img) < 16 and np.max(np_img) > 240
         if is_binary:
-            eroded = cv2.erode(np_img, np.ones(shape=(3, 3), dtype=np.uint8), iterations=1)
-            dilated = cv2.dilate(eroded, np.ones(shape=(3, 3), dtype=np.uint8), iterations=1)
-            one_pixel_edge_count = np.where(dilated < np_img)[0].shape[0]
-            all_edge_count = np.where(np_img > 127)[0].shape[0]
+            kernel = np.ones(shape=(3, 3), dtype=np.uint8)
+            eroded = cv2.erode(np_img, kernel, iterations=1)
+            dilated = cv2.dilate(eroded, kernel, iterations=1)
+            one_pixel_edge_count = np.count_nonzero(dilated < np_img)
+            all_edge_count = np.count_nonzero(np_img > 127)
             is_one_pixel_edge = one_pixel_edge_count * 2 > all_edge_count
 
     if 2 < unique_color_count < 200:
@@ -223,8 +231,9 @@ def heuristic_resize(np_img: np.ndarray[Any, Any], size: tuple[int, int]) -> np.
 
     # Restore the alpha channel if it was present.
     if inpaint_mask is not None:
-        inpaint_mask = (inpaint_mask > 127).astype(np.float32) * 255.0
-        inpaint_mask = inpaint_mask[:, :, None].clip(0, 255).astype(np.uint8)
+        # Use astype to convert mask directly
+        inpaint_mask = (inpaint_mask > 127).astype(np.uint8) * 255
+        inpaint_mask = inpaint_mask[:, :, None]
         resized = np.concatenate([resized, inpaint_mask], axis=2)
 
     return resized
