@@ -257,9 +257,19 @@ def heuristic_resize_fast(np_img: np.ndarray, size: tuple[int, int]) -> np.ndarr
     flat = img.reshape(-1, img.shape[-1])
     N = flat.shape[0]
     # include four corners to avoid missing extreme values
-    corners = np.vstack([img[0, 0], img[0, w - 1], img[h - 1, 0], img[h - 1, w - 1]])
+    corners = np.empty((4, img.shape[-1]), dtype=img.dtype)
+    corners[0] = img[0, 0]
+    corners[1] = img[0, w - 1]
+    corners[2] = img[h - 1, 0]
+    corners[3] = img[h - 1, w - 1]
     cnt = min(N, 100_000)
-    samp = np.vstack([corners, flat[np.random.choice(N, cnt, replace=False)]])
+    if cnt < N:
+        idx = np.random.randint(0, N, cnt)
+    else:
+        idx = np.arange(N)
+    samp = np.empty((4 + cnt, img.shape[-1]), dtype=img.dtype)
+    samp[:4] = corners
+    samp[4:] = flat[idx]
     uc = np.unique(samp, axis=0).shape[0]
     vmin, vmax = samp.min(), samp.max()
 
