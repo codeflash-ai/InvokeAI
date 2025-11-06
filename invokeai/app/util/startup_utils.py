@@ -36,7 +36,7 @@ def check_cudnn(logger: logging.Logger) -> None:
 
 def invokeai_source_dir() -> Path:
     # `invokeai.__file__` doesn't always work for editable installs
-    this_module_path = Path(__file__).resolve()
+    this_module_path = Path(__file__).absolute()
     # https://youtrack.jetbrains.com/issue/PY-38382/Unresolved-reference-spec-but-this-is-standard-builtin
     # noinspection PyUnresolvedReferences
     depth = len(__spec__.parent.split("."))
