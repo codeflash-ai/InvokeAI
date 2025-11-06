@@ -47,33 +47,34 @@ class CustomModuleMixin:
         # HACK(ryand): If the original parameters are in a quantized format whose weights can't be accessed, we replace
         # them with dummy tensors on the 'meta' device. This allows patch layers to access the shapes of the original
         # parameters. But, of course, any sub-layers that need to access the actual values of the parameters will fail.
-        for param_name in orig_params.keys():
-            param = orig_params[param_name]
-            if type(param) is torch.nn.Parameter and type(param.data) is torch.Tensor:
-                pass
-            elif type(param) is GGMLTensor:
+        prepared_params = {}
+        for param_name, param in orig_params.items():
+            if isinstance(param, torch.nn.Parameter) and isinstance(param.data, torch.Tensor):
+                prepared_params[param_name] = param
+            elif isinstance(param, GGMLTensor):
                 # Move to device and dequantize here. Doing it in the patch layer can result in redundant casts /
                 # dequantizations.
-                orig_params[param_name] = param.to(device=device).get_dequantized_tensor()
+                prepared_params[param_name] = param.to(device=device).get_dequantized_tensor()
             else:
-                orig_params[param_name] = torch.empty(get_param_shape(param), device="meta")
+                prepared_params[param_name] = torch.empty(get_param_shape(param), device="meta")
 
         params: dict[str, torch.Tensor] = {}
 
-        for patch, patch_weight in patches_and_weights:
-            if device is not None:
-                # Shallow copy the patch so that we can cast it to the target device without modifying the original patch.
-                patch = copy.copy(patch)
+        if device is not None and patches_and_weights:
+            # Make shallow copies for each patch for device casting, only if device is specified and there are patches.
+            patches_and_weights = [(copy.copy(patch), patch_weight) for patch, patch_weight in patches_and_weights]
+            for patch, _ in patches_and_weights:
                 patch.to(device)
 
+        for patch, patch_weight in patches_and_weights:
             # TODO(ryand): `self` could be a quantized module. Depending on what the patch is doing with the original
             # parameters, this might fail or return incorrect results.
-            layer_params = patch.get_parameters(orig_params, weight=patch_weight)
+            layer_params = patch.get_parameters(prepared_params, weight=patch_weight)
 
             for param_name, param_weight in layer_params.items():
-                if param_name not in params:
-                    params[param_name] = param_weight
-                else:
+                if param_name in params:
                     params[param_name] += param_weight
+                else:
+                    params[param_name] = param_weight
 
         return params
