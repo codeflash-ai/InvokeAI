@@ -414,20 +414,29 @@ def ok_l_r_from_l_tensor(x_tensor: torch.Tensor):
     k_1 = 0.206
     k_2 = 0.03
     k_3 = (1.0 + k_1) / (1.0 + k_2)
-    #  0.5f * (k_3 * x - k_1 + sqrtf((k_3 * x - k_1) * (k_3 * x - k_1) + 4 * k_2 * k_3 * x));
 
-    return torch.mul(
-        torch.add(
-            torch.sub(torch.mul(x_tensor, k_3), k_1),
-            torch.sqrt(
-                torch.add(
-                    torch.pow(torch.sub(torch.mul(x_tensor, k_3), k_1), 2.0),
-                    torch.mul(torch.mul(torch.mul(x_tensor, k_3), k_2), 4.0),
-                )
-            ),
-        ),
-        0.5,
-    )
+    # Optimize by computing intermediary terms in-place and minimizing unnecessary
+    # tensor creation. Only use torch.* when necessary. Fuse operations.
+
+    # t = k_3 * x_tensor - k_1
+    t = x_tensor.mul(k_3)
+    t.sub_(k_1)
+
+    # t^2
+    t_sq = t.square()  # .square() is more efficient than torch.pow(..., 2)
+    # x_tensor * k_3 * k_2 * 4.0
+    four_k2_k3 = 4.0 * k_2 * k_3
+    t2 = x_tensor.mul(four_k2_k3)  # Instead of multiple muls
+
+    # s = torch.sqrt(t_sq + t2)
+    s = t_sq.add_(t2)
+    s.sqrt_()  # In-place sqrt
+
+    # r = (t + s) * 0.5
+    r = t.add(s)
+    r.mul_(0.5)
+
+    return r
 
 
 def ok_l_from_lr_tensor(x_tensor: torch.Tensor):
