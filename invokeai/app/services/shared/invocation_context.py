@@ -757,14 +757,15 @@ def build_invocation_context(
         The invocation context.
     """
 
-    logger = LoggerInterface(services=services, data=data)
-    tensors = TensorsInterface(services=services, data=data)
-    config = ConfigInterface(services=services, data=data)
-    util = UtilInterface(services=services, data=data, is_canceled=is_canceled)
-    conditioning = ConditioningInterface(services=services, data=data)
-    models = ModelsInterface(services=services, data=data, util=util)
-    images = ImagesInterface(services=services, data=data, util=util)
-    boards = BoardsInterface(services=services, data=data)
+    args = (services, data)
+    logger = LoggerInterface(*args)
+    tensors = TensorsInterface(*args)
+    config = ConfigInterface(*args)
+    util = UtilInterface(*args, is_canceled=is_canceled)
+    conditioning = ConditioningInterface(*args)
+    models = ModelsInterface(*args, util=util)
+    images = ImagesInterface(*args, util=util)
+    boards = BoardsInterface(*args)
 
     ctx = InvocationContext(
         images=images,
