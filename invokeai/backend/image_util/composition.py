@@ -847,31 +847,31 @@ def xyz_from_srgb(rgb_l_tensor: torch.Tensor):
 
 def lab_from_xyz_helper(channel_illuminant_quotient_matrix: torch.Tensor):
     delta = 6.0 / 29.0
+    delta_cubed = delta**3.0
 
     return torch.where(
-        torch.gt(channel_illuminant_quotient_matrix, delta**3.0),
+        channel_illuminant_quotient_matrix > delta_cubed,
         torch.pow(channel_illuminant_quotient_matrix, 1.0 / 3.0),
-        torch.add(torch.div(channel_illuminant_quotient_matrix, 3.0 * (delta**2.0)), 4.0 / 29.0),
+        channel_illuminant_quotient_matrix / (3.0 * delta**2.0) + 4.0 / 29.0,
     )
 
 
 def lab_from_xyz(xyz_tensor: torch.Tensor, reference_illuminant: Literal["D65", "D50"] = "D65"):
     illuminant = {"D65": [95.0489, 100.0, 108.8840], "D50": [96.4212, 100.0, 82.5188]}[reference_illuminant]
-    l_tensor = torch.sub(torch.mul(lab_from_xyz_helper(torch.div(xyz_tensor[1, :, :], illuminant[1])), 116.0), 16.0)
-    a_tensor = torch.mul(
-        torch.sub(
-            lab_from_xyz_helper(torch.div(xyz_tensor[0, :, :], illuminant[0])),
-            lab_from_xyz_helper(torch.div(xyz_tensor[1, :, :], illuminant[1])),
-        ),
-        500.0,
-    )
-    b_tensor = torch.mul(
-        torch.sub(
-            lab_from_xyz_helper(torch.div(xyz_tensor[1, :, :], illuminant[1])),
-            lab_from_xyz_helper(torch.div(xyz_tensor[2, :, :], illuminant[2])),
-        ),
-        200.0,
-    )
+
+    # Precompute channel/illuminant quotients for all 3 channels
+    x_div = xyz_tensor[0, :, :] / illuminant[0]
+    y_div = xyz_tensor[1, :, :] / illuminant[1]
+    z_div = xyz_tensor[2, :, :] / illuminant[2]
+
+    # Compute helper outputs only once per needed channel
+    x_lab = lab_from_xyz_helper(x_div)
+    y_lab = lab_from_xyz_helper(y_div)
+    z_lab = lab_from_xyz_helper(z_div)
+
+    l_tensor = (y_lab * 116.0) - 16.0
+    a_tensor = (x_lab - y_lab) * 500.0
+    b_tensor = (y_lab - z_lab) * 200.0
 
     return torch.stack([l_tensor, a_tensor, b_tensor])
 
