@@ -16,6 +16,18 @@ from PIL import Image
 
 from invokeai.backend.stable_diffusion.diffusers_pipeline import image_resized_to_grid_as_tensor
 
+_k_lms_matrix = torch.tensor([
+    [0.3963377774, 0.2158037573],
+    [-0.1055613458, -0.0638541728],
+    [-0.0894841775, -1.2914855480]
+])
+
+_rgb_matrix = torch.tensor([
+    [4.0767416621, -3.3077115913, 0.2309699292],
+    [-1.2684380046, 2.6097574011, -0.3413193965],
+    [-0.0041960863, -0.7034186147, 1.7076147010],
+])
+
 MAX_FLOAT = torch.finfo(torch.tensor(1.0).dtype).max
 
 # CIE Lab to Uniform Perceptual Lab profile is copyright © 2003 Bruce Justin Lindbloom. All rights reserved. <http://www.brucelindbloom.com>
@@ -237,18 +249,23 @@ def find_cusp_tensor(units_ab_tensor: torch.Tensor, steps: int = 1):
 
     s_cusp_tensor = max_srgb_saturation_tensor(units_ab_tensor, steps=steps)
 
-    oklab_tensor = torch.stack(
-        [
-            torch.ones(s_cusp_tensor.shape),
-            torch.mul(s_cusp_tensor, units_ab_tensor[0, :, :]),
-            torch.mul(s_cusp_tensor, units_ab_tensor[1, :, :]),
-        ]
-    )
-
+    # Precompute tensors for stacking efficiently
+    s_cusp_tensor_broadcast = s_cusp_tensor
+    ab0 = units_ab_tensor[0, :, :]
+    ab1 = units_ab_tensor[1, :, :]
+    oklab_tensor = torch.stack([
+        torch.ones_like(s_cusp_tensor_broadcast),
+        torch.mul(s_cusp_tensor_broadcast, ab0),
+        torch.mul(s_cusp_tensor_broadcast, ab1),
+    ])
     rgb_at_max_tensor = linear_srgb_from_oklab(oklab_tensor)
 
-    l_cusp_tensor = torch.pow(torch.div(1.0, rgb_at_max_tensor.max(0).values), 1.0 / 3.0)
-    c_cusp_tensor = torch.mul(l_cusp_tensor, s_cusp_tensor)
+    # .max(0).values is equivalent to torch.amax(tensor, dim=0)
+    l_cusp_tensor = torch.pow(
+        torch.div(1.0, torch.amax(rgb_at_max_tensor, dim=0)), 1.0 / 3.0
+    )
+    c_cusp_tensor = torch.mul(l_cusp_tensor, s_cusp_tensor_broadcast)
+
 
     return torch.stack([l_cusp_tensor, c_cusp_tensor])
 
@@ -269,81 +286,83 @@ def find_gamut_intersection_tensor(
 
     # if (((l_1 - l_0) * c_cusp -
     #      (l_cusp - l_0) * c_1) <= 0.):
+
+    lc0 = lc_cusps_tensor[0, :, :]
+    lc1 = lc_cusps_tensor[1, :, :]
+
+    # Precompute subtractions and multiplications to reduce duplicate work
+    l_1_minus_l_0 = torch.sub(l_1_tensor, l_0_tensor)
+    lc0_minus_l_0 = torch.sub(lc0, l_0_tensor)
+    lc0_minus_1 = torch.sub(lc0, 1.0)
+    l_0_minus_l_1 = torch.sub(l_0_tensor, l_1_tensor)
+    l_0_minus_1 = torch.sub(l_0_tensor, 1.0)
+    # if (((l_1 - l_0) * c_cusp -
+    #      (l_cusp - l_0) * c_1) <= 0.):
     cond_tensor = torch.sub(
-        torch.mul(torch.sub(l_1_tensor, l_0_tensor), lc_cusps_tensor[1, :, :]),
-        torch.mul(torch.sub(lc_cusps_tensor[0, :, :], l_0_tensor), c_1_tensor),
+        torch.mul(l_1_minus_l_0, lc1),
+        torch.mul(lc0_minus_l_0, c_1_tensor),
+    )
+
+    num_0 = torch.mul(lc1, l_0_tensor)
+    den_0 = torch.add(
+        torch.mul(c_1_tensor, lc0),
+        torch.mul(lc1, l_0_minus_l_1),
+    )
+    num_1 = torch.mul(lc1, l_0_minus_1)
+    den_1 = torch.add(
+        torch.mul(c_1_tensor, lc0_minus_1),
+        torch.mul(lc1, l_0_minus_l_1),
     )
 
     t_tensor = torch.where(
         torch.le(cond_tensor, 0.0),  # cond <= 0
-        #  t = (c_cusp * l_0) /
-        #      ((c_1 * l_cusp) + (c_cusp * (l_0 - l_1)))
-        torch.div(
-            torch.mul(lc_cusps_tensor[1, :, :], l_0_tensor),
-            torch.add(
-                torch.mul(c_1_tensor, lc_cusps_tensor[0, :, :]),
-                torch.mul(lc_cusps_tensor[1, :, :], torch.sub(l_0_tensor, l_1_tensor)),
-            ),
-        ),
-        # t = (c_cusp * (l_0-1.)) /
-        #     ((c_1 * (l_cusp-1.)) + (c_cusp * (l_0 - l_1)))
-        torch.div(
-            torch.mul(lc_cusps_tensor[1, :, :], torch.sub(l_0_tensor, 1.0)),
-            torch.add(
-                torch.mul(c_1_tensor, torch.sub(lc_cusps_tensor[0, :, :], 1.0)),
-                torch.mul(lc_cusps_tensor[1, :, :], torch.sub(l_0_tensor, l_1_tensor)),
-            ),
-        ),
+        torch.div(num_0, den_0),
+        torch.div(num_1, den_1),
     )
 
     for _ in range(steps_outer):
-        dl_tensor = torch.sub(l_1_tensor, l_0_tensor)
+        dl_tensor = l_1_minus_l_0
         dc_tensor = c_1_tensor
 
-        k_lms_matrix = torch.tensor(
-            [[0.3963377774, 0.2158037573], [-0.1055613458, -0.0638541728], [-0.0894841775, -1.2914855480]]
-        )
-        k_lms_tensor = torch.einsum("tc, cwh -> twh", k_lms_matrix, units_ab_tensor)
+        k_lms_tensor = torch.einsum("tc, cwh -> twh", _k_lms_matrix, units_ab_tensor)
 
         lms_dt_tensor = torch.add(torch.mul(k_lms_tensor, dc_tensor), dl_tensor)
 
         for _ in range(steps):
-            l_tensor = torch.add(
-                torch.mul(l_0_tensor, torch.add(torch.mul(t_tensor, -1.0), 1.0)), torch.mul(t_tensor, l_1_tensor)
-            )
+            t_tensor_inv = torch.add(torch.mul(t_tensor, -1.0), 1.0)
+            l_tensor = torch.add(torch.mul(l_0_tensor, t_tensor_inv), torch.mul(t_tensor, l_1_tensor))
             c_tensor = torch.mul(t_tensor, c_1_tensor)
 
             root_lms_tensor = torch.add(torch.mul(k_lms_tensor, c_tensor), l_tensor)
 
+            root_lms_tensor2 = torch.pow(root_lms_tensor, 2.0)
             lms_tensor = torch.pow(root_lms_tensor, 3.0)
-            lms_dt_tensor_1 = torch.mul(torch.mul(torch.pow(root_lms_tensor, 2.0), lms_dt_tensor), 3.0)
-            lms_dt2_tensor = torch.mul(torch.mul(torch.pow(lms_dt_tensor, 2.0), root_lms_tensor), 6.0)
+            lms_dt_tensor_1 = torch.mul(root_lms_tensor2 * lms_dt_tensor, 3.0)
+            lms_dt2_tensor = torch.mul(torch.pow(lms_dt_tensor, 2.0) * root_lms_tensor, 6.0)
 
-            rgb_matrix = torch.tensor(
-                [
-                    [4.0767416621, -3.3077115913, 0.2309699292],
-                    [-1.2684380046, 2.6097574011, -0.3413193965],
-                    [-0.0041960863, -0.7034186147, 1.7076147010],
-                ]
-            )
+            rgb_tensor = torch.sub(torch.einsum("qt, twh -> qwh", _rgb_matrix, lms_tensor), 1.0)
+            rgb_tensor_1 = torch.einsum("qt, twh -> qwh", _rgb_matrix, lms_dt_tensor_1)
+            rgb_tensor_2 = torch.einsum("qt, twh -> qwh", _rgb_matrix, lms_dt2_tensor)
 
-            rgb_tensor = torch.sub(torch.einsum("qt, twh -> qwh", rgb_matrix, lms_tensor), 1.0)
-            rgb_tensor_1 = torch.einsum("qt, twh -> qwh", rgb_matrix, lms_dt_tensor_1)
-            rgb_tensor_2 = torch.einsum("qt, twh -> qwh", rgb_matrix, lms_dt2_tensor)
+            # Avoid repeated computation for tensors used more than once
+            rgb_tensor_1_sq = torch.pow(rgb_tensor_1, 2.0)
+            rgb_tensor_rgb_tensor_2 = torch.mul(torch.mul(rgb_tensor, rgb_tensor_2), 0.5)
+            denominator = torch.sub(rgb_tensor_1_sq, rgb_tensor_rgb_tensor_2)
 
-            u_rgb_tensor = torch.div(
-                rgb_tensor_1,
-                torch.sub(torch.pow(rgb_tensor_1, 2.0), torch.mul(torch.mul(rgb_tensor, rgb_tensor_2), 0.5)),
-            )
+            u_rgb_tensor = torch.div(rgb_tensor_1, denominator)
 
             t_rgb_tensor = torch.mul(torch.mul(rgb_tensor, -1.0), u_rgb_tensor)
 
-            max_floats = torch.mul(MAX_FLOAT, torch.ones(t_rgb_tensor.shape))
+            max_floats = torch.mul(MAX_FLOAT, torch.ones_like(t_rgb_tensor))
+
 
             t_rgb_tensor = torch.where(torch.lt(u_rgb_tensor, 0.0), max_floats, t_rgb_tensor)
 
+
+            min_t_rgb = t_rgb_tensor.min(0).values
+
             t_tensor = torch.where(
-                torch.gt(cond_tensor, 0.0), torch.add(t_tensor, t_rgb_tensor.min(0).values), t_tensor
+                torch.gt(cond_tensor, 0.0), torch.add(t_tensor, min_t_rgb), t_tensor
             )
 
     return t_tensor
@@ -400,12 +419,15 @@ def gamut_clip_tensor(rgb_l_tensor: torch.Tensor, alpha: float = 0.05, steps: in
 def st_cusps_from_lc(lc_cusps_tensor: torch.Tensor):
     """Alternative cusp representation with max C as min(S*L, T*(1-L))"""
 
-    return torch.stack(
-        [
-            torch.div(lc_cusps_tensor[1, :, :], lc_cusps_tensor[0, :, :]),
-            torch.div(lc_cusps_tensor[1, :, :], torch.add(torch.mul(lc_cusps_tensor[0, :, :], -1.0), 1)),
-        ]
-    )
+    lc0 = lc_cusps_tensor[0, :, :]
+    lc1 = lc_cusps_tensor[1, :, :]
+
+    lc0_minus_1 = torch.add(torch.mul(lc0, -1.0), 1)
+
+    st0 = torch.div(lc1, lc0)
+    st1 = torch.div(lc1, lc0_minus_1)
+
+    return torch.stack([st0, st1])
 
 
 def ok_l_r_from_l_tensor(x_tensor: torch.Tensor):
@@ -586,90 +608,45 @@ def okhsv_from_srgb(srgb_tensor: torch.Tensor, steps: int = 1):
 def get_st_mid_tensor(units_ab_tensor: torch.Tensor):
     """Returns a smooth approximation of cusp, where st_mid < st_max"""
 
-    return torch.stack(
-        [
-            torch.add(
-                torch.div(
-                    1.0,
-                    torch.add(
-                        torch.add(
-                            torch.mul(units_ab_tensor[1, :, :], 4.15901240),
-                            torch.mul(
-                                units_ab_tensor[0, :, :],
-                                torch.add(
-                                    torch.add(
-                                        torch.mul(units_ab_tensor[1, :, :], 1.75198401),
-                                        torch.mul(
-                                            units_ab_tensor[0, :, :],
-                                            torch.add(
-                                                torch.add(
-                                                    torch.mul(units_ab_tensor[1, :, :], -10.02301043),
-                                                    torch.mul(
-                                                        units_ab_tensor[0, :, :],
-                                                        torch.add(
-                                                            torch.add(
-                                                                torch.mul(units_ab_tensor[1, :, :], 5.38770819),
-                                                                torch.mul(units_ab_tensor[0, :, :], 4.69891013),
-                                                            ),
-                                                            -4.24894561,
-                                                        ),
-                                                    ),
-                                                ),
-                                                -2.13704948,
-                                            ),
-                                        ),
-                                    ),
-                                    -2.19557347,
-                                ),
-                            ),
-                        ),
-                        7.44778970,
-                    ),
-                ),
-                0.11516993,
-            ),
-            torch.add(
-                torch.div(
-                    1.0,
-                    torch.add(
-                        torch.add(
-                            torch.mul(units_ab_tensor[1, :, :], -0.68124379),
-                            torch.mul(
-                                units_ab_tensor[0, :, :],
-                                torch.add(
-                                    torch.add(
-                                        torch.mul(units_ab_tensor[1, :, :], 0.90148123),
-                                        torch.mul(
-                                            units_ab_tensor[0, :, :],
-                                            torch.add(
-                                                torch.add(
-                                                    torch.mul(units_ab_tensor[1, :, :], 0.61223990),
-                                                    torch.mul(
-                                                        units_ab_tensor[0, :, :],
-                                                        torch.add(
-                                                            torch.add(
-                                                                torch.mul(units_ab_tensor[1, :, :], -0.45399568),
-                                                                torch.mul(units_ab_tensor[0, :, :], -0.14661872),
-                                                            ),
-                                                            0.00299215,
-                                                        ),
-                                                    ),
-                                                ),
-                                                -0.27087943,
-                                            ),
-                                        ),
-                                    ),
-                                    0.40370612,
-                                ),
-                            ),
-                        ),
-                        1.61320320,
-                    ),
-                ),
-                0.11239642,
-            ),
-        ]
+    ab0 = units_ab_tensor[0, :, :]
+    ab1 = units_ab_tensor[1, :, :]
+
+    # For performance, collapse repetitive arithmetic using local variables and reduce computation branches
+    # Top polynomial
+    top_poly = (
+        torch.mul(ab1, 4.15901240) +
+        torch.mul(ab0, (
+            torch.mul(ab1, 1.75198401) +
+            torch.mul(ab0, (
+                torch.mul(ab1, -10.02301043) +
+                torch.mul(ab0, (
+                    torch.mul(ab1, 5.38770819) +
+                    torch.mul(ab0, 4.69891013) - 4.24894561
+                )) - 2.13704948
+            )) -2.19557347
+        )) + 7.44778970
     )
+
+
+    st0 = torch.add(torch.div(1.0, top_poly), 0.11516993)
+
+    # Bottom polynomial
+    bottom_poly = (
+        torch.mul(ab1, -0.68124379) +
+        torch.mul(ab0, (
+            torch.mul(ab1, 0.90148123) +
+            torch.mul(ab0, (
+                torch.mul(ab1, 0.61223990) +
+                torch.mul(ab0, (
+                    torch.mul(ab1, -0.45399568) +
+                    torch.mul(ab0, -0.14661872) + 0.00299215
+                )) -0.27087943
+            )) + 0.40370612
+        )) + 1.61320320
+    )
+    st1 = torch.add(torch.div(1.0, bottom_poly), 0.11239642)
+
+    return torch.stack([st0, st1])
 
 
 def get_cs_tensor(
@@ -682,7 +659,7 @@ def get_cs_tensor(
     c_max_tensor = find_gamut_intersection_tensor(
         units_ab_tensor,
         l_tensor,
-        torch.ones(l_tensor.shape),
+        torch.ones_like(l_tensor),
         l_tensor,
         lc_cusps_tensor=lc_cusps_tensor,
         steps=steps,
@@ -690,41 +667,32 @@ def get_cs_tensor(
     )
     st_max_tensor = st_cusps_from_lc(lc_cusps_tensor)
 
-    k_tensor = torch.div(
-        c_max_tensor,
-        torch.min(
-            torch.mul(l_tensor, st_max_tensor[0, :, :]),
-            torch.mul(torch.add(torch.mul(l_tensor, -1.0), 1.0), st_max_tensor[1, :, :]),
-        ),
-    )
+    # Only compute torch.mul and torch.min once per tensor
+    l_tensor_neg = torch.mul(l_tensor, -1.0)
+    l_tensor_inv = torch.add(l_tensor_neg, 1.0)
+    s0 = torch.mul(l_tensor, st_max_tensor[0, :, :])
+    s1 = torch.mul(l_tensor_inv, st_max_tensor[1, :, :])
+    min_s = torch.min(s0, s1)
+    k_tensor = torch.div(c_max_tensor, min_s)
+
 
     st_mid_tensor = get_st_mid_tensor(units_ab_tensor)
     c_a_tensor = torch.mul(l_tensor, st_mid_tensor[0, :, :])
-    c_b_tensor = torch.mul(torch.add(torch.mul(l_tensor, -1.0), 1.0), st_mid_tensor[1, :, :])
+    c_b_tensor = torch.mul(l_tensor_inv, st_mid_tensor[1, :, :])
+    denominator_mid = torch.add(
+        torch.div(1.0, torch.pow(c_a_tensor, 4.0)), torch.div(1.0, torch.pow(c_b_tensor, 4.0))
+    )
     c_mid_tensor = torch.mul(
-        torch.mul(
-            k_tensor,
-            torch.sqrt(
-                torch.sqrt(
-                    torch.div(
-                        1.0,
-                        torch.add(
-                            torch.div(1.0, torch.pow(c_a_tensor, 4.0)), torch.div(1.0, torch.pow(c_b_tensor, 4.0))
-                        ),
-                    )
-                )
-            ),
-        ),
-        0.9,
+        torch.mul(k_tensor, torch.sqrt(torch.sqrt(torch.div(1.0, denominator_mid)))), 0.9
     )
 
-    c_a_tensor = torch.mul(l_tensor, 0.4)
-    c_b_tensor = torch.mul(torch.add(torch.mul(l_tensor, -1.0), 1.0), 0.8)
-    c_0_tensor = torch.sqrt(
-        torch.div(
-            1.0, torch.add(torch.div(1.0, torch.pow(c_a_tensor, 2.0)), torch.div(1.0, torch.pow(c_b_tensor, 2.0)))
-        )
+    c_a_tensor0 = torch.mul(l_tensor, 0.4)
+    c_b_tensor0 = torch.mul(l_tensor_inv, 0.8)
+    denominator0 = torch.add(
+        torch.div(1.0, torch.pow(c_a_tensor0, 2.0)), torch.div(1.0, torch.pow(c_b_tensor0, 2.0))
     )
+
+    c_0_tensor = torch.sqrt(torch.div(1.0, denominator0))
 
     return torch.stack([c_0_tensor, c_mid_tensor, c_max_tensor])
 
