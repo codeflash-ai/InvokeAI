@@ -586,90 +586,34 @@ def okhsv_from_srgb(srgb_tensor: torch.Tensor, steps: int = 1):
 def get_st_mid_tensor(units_ab_tensor: torch.Tensor):
     """Returns a smooth approximation of cusp, where st_mid < st_max"""
 
-    return torch.stack(
-        [
-            torch.add(
-                torch.div(
-                    1.0,
-                    torch.add(
-                        torch.add(
-                            torch.mul(units_ab_tensor[1, :, :], 4.15901240),
-                            torch.mul(
-                                units_ab_tensor[0, :, :],
-                                torch.add(
-                                    torch.add(
-                                        torch.mul(units_ab_tensor[1, :, :], 1.75198401),
-                                        torch.mul(
-                                            units_ab_tensor[0, :, :],
-                                            torch.add(
-                                                torch.add(
-                                                    torch.mul(units_ab_tensor[1, :, :], -10.02301043),
-                                                    torch.mul(
-                                                        units_ab_tensor[0, :, :],
-                                                        torch.add(
-                                                            torch.add(
-                                                                torch.mul(units_ab_tensor[1, :, :], 5.38770819),
-                                                                torch.mul(units_ab_tensor[0, :, :], 4.69891013),
-                                                            ),
-                                                            -4.24894561,
-                                                        ),
-                                                    ),
-                                                ),
-                                                -2.13704948,
-                                            ),
-                                        ),
-                                    ),
-                                    -2.19557347,
-                                ),
-                            ),
-                        ),
-                        7.44778970,
-                    ),
-                ),
-                0.11516993,
-            ),
-            torch.add(
-                torch.div(
-                    1.0,
-                    torch.add(
-                        torch.add(
-                            torch.mul(units_ab_tensor[1, :, :], -0.68124379),
-                            torch.mul(
-                                units_ab_tensor[0, :, :],
-                                torch.add(
-                                    torch.add(
-                                        torch.mul(units_ab_tensor[1, :, :], 0.90148123),
-                                        torch.mul(
-                                            units_ab_tensor[0, :, :],
-                                            torch.add(
-                                                torch.add(
-                                                    torch.mul(units_ab_tensor[1, :, :], 0.61223990),
-                                                    torch.mul(
-                                                        units_ab_tensor[0, :, :],
-                                                        torch.add(
-                                                            torch.add(
-                                                                torch.mul(units_ab_tensor[1, :, :], -0.45399568),
-                                                                torch.mul(units_ab_tensor[0, :, :], -0.14661872),
-                                                            ),
-                                                            0.00299215,
-                                                        ),
-                                                    ),
-                                                ),
-                                                -0.27087943,
-                                            ),
-                                        ),
-                                    ),
-                                    0.40370612,
-                                ),
-                            ),
-                        ),
-                        1.61320320,
-                    ),
-                ),
-                0.11239642,
-            ),
-        ]
+    a = units_ab_tensor[0, :, :]
+    b = units_ab_tensor[1, :, :]
+
+    st_0_poly = (
+        4.15901240 * b
+        + a
+        * (
+            1.75198401 * b
+            + a * (-10.02301043 * b + a * (5.38770819 * b + 4.69891013 * a - 4.24894561) - 2.13704948)
+            - 2.19557347
+        )
+        + 7.44778970
     )
+    st_0 = 1.0 / st_0_poly + 0.11516993
+
+    st_1_poly = (
+        -0.68124379 * b
+        + a
+        * (
+            0.90148123 * b
+            + a * (0.61223990 * b + a * (-0.45399568 * b - 0.14661872 * a + 0.00299215) - 0.27087943)
+            + 0.40370612
+        )
+        + 1.61320320
+    )
+    st_1 = 1.0 / st_1_poly + 0.11239642
+
+    return torch.stack([st_0, st_1])
 
 
 def get_cs_tensor(
