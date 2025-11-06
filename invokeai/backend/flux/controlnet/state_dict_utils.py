@@ -20,9 +20,12 @@ def is_state_dict_xlabs_controlnet(sd: dict[str | int, Any]) -> bool:
         "pos_embed_input.weight",
     }
 
-    if expected_keys.issubset(sd.keys()):
-        return True
-    return False
+    sd_keys = sd.keys()
+    # Use generator expression to short-circuit as soon as a missing key is found
+    for key in expected_keys:
+        if key not in sd_keys:
+            return False
+    return True
 
 
 def is_state_dict_instantx_controlnet(sd: dict[str | int, Any]) -> bool:
