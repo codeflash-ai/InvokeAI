@@ -1,5 +1,10 @@
 from abc import ABC
-from typing import Any, Literal, Self
+from typing import Any, Literal
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -78,11 +83,12 @@ class Main_Config_Base(ABC, BaseModel):
 
 
 def _has_bnb_nf4_keys(state_dict: dict[str | int, Any]) -> bool:
-    bnb_nf4_keys = {
+    bnb_nf4_keys = (
         "double_blocks.0.img_attn.proj.weight.quant_state.bitsandbytes__nf4",
         "model.diffusion_model.double_blocks.0.img_attn.proj.weight.quant_state.bitsandbytes__nf4",
-    }
-    return any(key in state_dict for key in bnb_nf4_keys)
+    )
+    state_keys = state_dict.keys()
+    return bnb_nf4_keys[0] in state_keys or bnb_nf4_keys[1] in state_keys
 
 
 def _has_ggml_tensors(state_dict: dict[str | int, Any]) -> bool:
