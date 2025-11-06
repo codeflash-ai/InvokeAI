@@ -38,18 +38,15 @@ def get_config_dict_or_raise(config_path: Path | set[Path]) -> dict[str, Any]:
     problems: dict[Path, str] = {}
 
     for p in paths_to_check:
-        if not p.exists():
-            problems[p] = "file does not exist"
-            continue
-
         try:
-            with open(p, "r") as file:
+            with open(p) as file:
                 config = json.load(file)
 
             return config
+        except FileNotFoundError:
+            problems[p] = "file does not exist"
         except Exception as e:
             problems[p] = str(e)
-            continue
 
     raise NotAMatchError(f"unable to load config file(s): {problems}")
 
