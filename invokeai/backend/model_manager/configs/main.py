@@ -1,5 +1,10 @@
 from abc import ABC
-from typing import Any, Literal, Self
+from typing import Any, Literal
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -86,7 +91,13 @@ def _has_bnb_nf4_keys(state_dict: dict[str | int, Any]) -> bool:
 
 
 def _has_ggml_tensors(state_dict: dict[str | int, Any]) -> bool:
-    return any(isinstance(v, GGMLTensor) for v in state_dict.values())
+    # Store GGMLTensor in a local variable for faster repeated attribute lookup
+    tensor_type = GGMLTensor
+    # Use a for-loop with early return for performance (avoids generator setup for 'any')
+    for v in state_dict.values():
+        if isinstance(v, tensor_type):
+            return True
+    return False
 
 
 def _has_main_keys(state_dict: dict[str | int, Any]) -> bool:
