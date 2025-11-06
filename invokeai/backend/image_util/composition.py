@@ -438,9 +438,11 @@ def ok_l_from_lr_tensor(x_tensor: torch.Tensor):
     k_3 = (1.0 + k_1) / (1.0 + k_2)
 
     # (x * x + k_1 * x) / (k_3 * (x + k_2))
-    return torch.div(
-        torch.add(torch.pow(x_tensor, 2.0), torch.mul(x_tensor, k_1)), torch.mul(torch.add(x_tensor, k_2), k_3)
-    )
+    t1 = torch.pow(x_tensor, 2.0)
+    t1 += k_1 * x_tensor
+    t2 = x_tensor + k_2
+    t2 *= k_3
+    return t1 / t2
 
 
 def srgb_from_okhsv(okhsv_tensor: torch.Tensor, alpha: float = 0.05, steps: int = 1):
