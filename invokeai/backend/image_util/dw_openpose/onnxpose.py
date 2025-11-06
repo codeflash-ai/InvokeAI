@@ -6,6 +6,10 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 
+_MEAN = np.array([123.675, 116.28, 103.53], dtype=np.float32)
+
+_STD = np.array([58.395, 57.12, 57.375], dtype=np.float32)
+
 
 def preprocess(
     img: np.ndarray, out_bbox, input_size: Tuple[int, int] = (192, 256)
@@ -28,11 +32,10 @@ def preprocess(
     if len(out_bbox) == 0:
         out_bbox = [[0, 0, img_shape[1], img_shape[0]]]
     for i in range(len(out_bbox)):
-        x0 = out_bbox[i][0]
-        y0 = out_bbox[i][1]
-        x1 = out_bbox[i][2]
-        y1 = out_bbox[i][3]
-        bbox = np.array([x0, y0, x1, y1])
+        x0, y0, x1, y1 = out_bbox[i]
+        bbox = np.array([x0, y0, x1, y1], dtype=np.float32)  # Use float32, matches normalized dtype
+
+        # get center and scale
 
         # get center and scale
         center, scale = bbox_xyxy2cs(bbox, padding=1.25)
@@ -40,10 +43,12 @@ def preprocess(
         # do affine transformation
         resized_img, scale = top_down_affine(input_size, scale, center, img)
 
-        # normalize image
-        mean = np.array([123.675, 116.28, 103.53])
-        std = np.array([58.395, 57.12, 57.375])
-        resized_img = (resized_img - mean) / std
+        # normalize image (in-place for perf)
+        # Optimization: avoid repeated np.array() allocations by using global constants above
+        resized_img = resized_img.astype(np.float32, copy=False)
+        # Use broadcasting, explicitly use float32
+        np.subtract(resized_img, _MEAN, out=resized_img)
+        np.divide(resized_img, _STD, out=resized_img)
 
         out_img.append(resized_img)
         out_center.append(center)
@@ -62,16 +67,15 @@ def inference(sess: ort.InferenceSession, img: np.ndarray) -> np.ndarray:
     Returns:
         outputs (np.ndarray): Output of RTMPose model.
     """
+    # Optimization: Prepare output node names only once, outside loop
+    sess_output = [out.name for out in sess.get_outputs()]
+    input_name = sess.get_inputs()[0].name
     all_out = []
     # build input
-    for i in range(len(img)):
-        input = [img[i].transpose(2, 0, 1)]
-
-        # build output
-        sess_input = {sess.get_inputs()[0].name: input}
-        sess_output = []
-        for out in sess.get_outputs():
-            sess_output.append(out.name)
+    for frame in img:
+        input_data = frame.transpose(2, 0, 1)
+        # Optimization: avoid wrapping input in list, ONNX expects np.ndarray batch or single image
+        sess_input = {input_name: [input_data]}
 
         # run model
         outputs = sess.run(sess_output, sess_input)
@@ -101,15 +105,22 @@ def postprocess(
         - keypoints (np.ndarray): Rescaled keypoints.
         - scores (np.ndarray): Model predict scores.
     """
+    w, h = model_input_size
     all_key = []
     all_score = []
-    for i in range(len(outputs)):
+    # Optimization: Use indices directly for output/corner access and avoid repeated division
+    input_size_arr = np.array([w, h], dtype=np.float32)
+    for i, output in enumerate(outputs):
         # use simcc to decode
-        simcc_x, simcc_y = outputs[i]
+        simcc_x, simcc_y = output
         keypoints, scores = decode(simcc_x, simcc_y, simcc_split_ratio)
 
-        # rescale keypoints
-        keypoints = keypoints / model_input_size * scale[i] + center[i] - scale[i] / 2
+        # rescale keypoints -- using vectorized arithmetic
+        scale_i = scale[i]
+        center_i = center[i]
+        # keypoints shape: (1, K, 2) or (K, 2) depending on batch; this logic assumes [0] single
+        keypoints = keypoints / input_size_arr * scale_i + center_i - scale_i / 2
+
         all_key.append(keypoints[0])
         all_score.append(scores[0])
 
