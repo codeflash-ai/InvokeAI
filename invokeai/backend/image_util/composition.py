@@ -16,6 +16,22 @@ from PIL import Image
 
 from invokeai.backend.stable_diffusion.diffusers_pipeline import image_resized_to_grid_as_tensor
 
+_LMS_MATRIX_1 = torch.tensor(
+    [[1.0, 0.3963377774, 0.2158037573], [1.0, -0.1055613458, -0.0638541728], [1.0, -0.0894841775, -1.2914855480]]
+)
+
+_RGB_MATRIX = torch.tensor(
+    [
+        [4.0767416621, -3.3077115913, 0.2309699292],
+        [-1.2684380046, 2.6097574011, -0.3413193965],
+        [-0.0041960863, -0.7034186147, 1.7076147010],
+    ]
+)
+
+_S0_TENSOR = torch.tensor(0.5)
+
+_ZERO_TENSOR_CACHE = {}
+
 MAX_FLOAT = torch.finfo(torch.tensor(1.0).dtype).max
 
 # CIE Lab to Uniform Perceptual Lab profile is copyright © 2003 Bruce Justin Lindbloom. All rights reserved. <http://www.brucelindbloom.com>
@@ -62,8 +78,9 @@ def srgb_from_linear_srgb(linear_srgb_tensor: torch.Tensor, alpha: float = 0.0, 
         linear_srgb_tensor = gamut_clip_tensor(linear_srgb_tensor, alpha=alpha, steps=steps)
     linear_srgb_tensor = linear_srgb_tensor.clamp(0.0, 1.0)
     mask = torch.lt(linear_srgb_tensor, 0.0404482362771082 / 12.92)
-    rgb_tensor = torch.sub(torch.mul(torch.pow(linear_srgb_tensor, (1 / 2.4)), 1.055), 0.055)
-    rgb_tensor[mask] = torch.mul(linear_srgb_tensor[mask], 12.92)
+    out1 = torch.sub(torch.mul(torch.pow(linear_srgb_tensor, (1 / 2.4)), 1.055), 0.055)
+    out2 = torch.mul(linear_srgb_tensor, 12.92)
+    rgb_tensor = torch.where(mask, out2, out1)
 
     return rgb_tensor
 
@@ -179,23 +196,11 @@ def linear_srgb_from_oklab(oklab_tensor: torch.Tensor):
     """Get linear-light sRGB from an Oklab image tensor"""
 
     # L*a*b* to LMS
-    lms_matrix_1 = torch.tensor(
-        [[1.0, 0.3963377774, 0.2158037573], [1.0, -0.1055613458, -0.0638541728], [1.0, -0.0894841775, -1.2914855480]]
-    )
-
-    lms_tensor_1 = torch.einsum("lwh, kl -> kwh", oklab_tensor, lms_matrix_1)
+    lms_tensor_1 = torch.einsum("lwh, kl -> kwh", oklab_tensor, _LMS_MATRIX_1)
     lms_tensor = torch.pow(lms_tensor_1, 3.0)
 
     # LMS to linear RGB
-    rgb_matrix = torch.tensor(
-        [
-            [4.0767416621, -3.3077115913, 0.2309699292],
-            [-1.2684380046, 2.6097574011, -0.3413193965],
-            [-0.0041960863, -0.7034186147, 1.7076147010],
-        ]
-    )
-
-    linear_srgb_tensor = torch.einsum("kwh, sk -> swh", lms_tensor, rgb_matrix)
+    linear_srgb_tensor = torch.einsum("kwh, sk -> swh", lms_tensor, _RGB_MATRIX)
 
     return linear_srgb_tensor
 
@@ -237,17 +242,18 @@ def find_cusp_tensor(units_ab_tensor: torch.Tensor, steps: int = 1):
 
     s_cusp_tensor = max_srgb_saturation_tensor(units_ab_tensor, steps=steps)
 
-    oklab_tensor = torch.stack(
-        [
-            torch.ones(s_cusp_tensor.shape),
-            torch.mul(s_cusp_tensor, units_ab_tensor[0, :, :]),
-            torch.mul(s_cusp_tensor, units_ab_tensor[1, :, :]),
-        ]
-    )
+    # Efficient broadcasting for ones()
+    shape = s_cusp_tensor.shape
+    ones_tensor = torch.ones(shape, device=s_cusp_tensor.device, dtype=s_cusp_tensor.dtype)
+    l_channel = ones_tensor
+    a_channel = torch.mul(s_cusp_tensor, units_ab_tensor[0, :, :])
+    b_channel = torch.mul(s_cusp_tensor, units_ab_tensor[1, :, :])
+    oklab_tensor = torch.stack([l_channel, a_channel, b_channel])
 
     rgb_at_max_tensor = linear_srgb_from_oklab(oklab_tensor)
 
-    l_cusp_tensor = torch.pow(torch.div(1.0, rgb_at_max_tensor.max(0).values), 1.0 / 3.0)
+    rgb_max_vals = rgb_at_max_tensor.max(0).values
+    l_cusp_tensor = torch.pow(torch.div(1.0, rgb_max_vals), 1.0 / 3.0)
     c_cusp_tensor = torch.mul(l_cusp_tensor, s_cusp_tensor)
 
     return torch.stack([l_cusp_tensor, c_cusp_tensor])
@@ -399,13 +405,11 @@ def gamut_clip_tensor(rgb_l_tensor: torch.Tensor, alpha: float = 0.05, steps: in
 
 def st_cusps_from_lc(lc_cusps_tensor: torch.Tensor):
     """Alternative cusp representation with max C as min(S*L, T*(1-L))"""
-
-    return torch.stack(
-        [
-            torch.div(lc_cusps_tensor[1, :, :], lc_cusps_tensor[0, :, :]),
-            torch.div(lc_cusps_tensor[1, :, :], torch.add(torch.mul(lc_cusps_tensor[0, :, :], -1.0), 1)),
-        ]
-    )
+    # Avoid repeated allocation, combine into a single call to torch.stack
+    l, c = lc_cusps_tensor[0, :, :], lc_cusps_tensor[1, :, :]
+    out1 = torch.div(c, l)
+    out2 = torch.div(c, torch.add(torch.mul(l, -1.0), 1))
+    return torch.stack([out1, out2])
 
 
 def ok_l_r_from_l_tensor(x_tensor: torch.Tensor):
@@ -438,9 +442,9 @@ def ok_l_from_lr_tensor(x_tensor: torch.Tensor):
     k_3 = (1.0 + k_1) / (1.0 + k_2)
 
     # (x * x + k_1 * x) / (k_3 * (x + k_2))
-    return torch.div(
-        torch.add(torch.pow(x_tensor, 2.0), torch.mul(x_tensor, k_1)), torch.mul(torch.add(x_tensor, k_2), k_3)
-    )
+    num = torch.add(torch.pow(x_tensor, 2.0), torch.mul(x_tensor, k_1))
+    denom = torch.mul(torch.add(x_tensor, k_2), k_3)
+    return torch.div(num, denom)
 
 
 def srgb_from_okhsv(okhsv_tensor: torch.Tensor, alpha: float = 0.05, steps: int = 1):
@@ -448,66 +452,67 @@ def srgb_from_okhsv(okhsv_tensor: torch.Tensor, alpha: float = 0.05, steps: int 
 
     okhsv_tensor = okhsv_tensor.clamp(0.0, 1.0)
 
-    units_ab_tensor = torch.stack(
-        [torch.cos(torch.mul(okhsv_tensor[0, :, :], 2.0 * PI)), torch.sin(torch.mul(okhsv_tensor[0, :, :], 2.0 * PI))]
-    )
+    h = okhsv_tensor[0, :, :]
+    s = okhsv_tensor[1, :, :]
+    v = okhsv_tensor[2, :, :]
+    h_angle = h * (2.0 * PI)
+    units_ab_tensor = torch.stack([torch.cos(h_angle), torch.sin(h_angle)])
     lc_cusps_tensor = find_cusp_tensor(units_ab_tensor, steps=steps)
     st_max_tensor = st_cusps_from_lc(lc_cusps_tensor)
-    s_0_tensor = torch.tensor(0.5).expand(st_max_tensor.shape[1:])
-    k_tensor = torch.add(torch.mul(torch.div(s_0_tensor, st_max_tensor[0, :, :]), -1.0), 1)
+    # Precompute s_0_tensor shape and expand in a single step
+    s_0_tensor = _S0_TENSOR.expand(st_max_tensor.shape[1:])
 
-    # First compute L and V assuming a perfect triangular gamut
-    lc_v_base_tensor = torch.add(
-        s_0_tensor,
-        torch.sub(
-            st_max_tensor[1, :, :], torch.mul(st_max_tensor[1, :, :], torch.mul(k_tensor, okhsv_tensor[1, :, :]))
-        ),
-    )
-    lc_v_tensor = torch.stack(
-        [
-            torch.add(torch.div(torch.mul(torch.mul(okhsv_tensor[1, :, :], s_0_tensor), -1.0), lc_v_base_tensor), 1.0),
-            torch.div(
-                torch.mul(torch.mul(okhsv_tensor[1, :, :], st_max_tensor[1, :, :]), s_0_tensor), lc_v_base_tensor
-            ),
-        ]
-    )
+    k_tensor = 1 - (s_0_tensor / st_max_tensor[0, :, :])
+    # Avoid creating intermediate tensors when stacking and subbing
+    st1 = st_max_tensor[1, :, :]
+    base_sub = torch.mul(k_tensor, s)
+    lc_v_base_tensor = s_0_tensor + (st1 - torch.mul(st1, base_sub))
+    base = lc_v_base_tensor
+    # Avoid allocating temporary tensors by using .mul_(), .add_() etc when safe
 
-    lc_tensor = torch.mul(okhsv_tensor[2, :, :], lc_v_tensor)
+    # Compute element-wise formula for first and second channel in stack for lc_v_tensor
+    t1 = 1.0 + torch.div(-s * s_0_tensor, base)
+    t2 = (s * st1 * s_0_tensor) / base
+    lc_v_tensor = torch.stack([t1, t2])
+
+    lc_tensor = v * lc_v_tensor
 
     l_vt_tensor = ok_l_from_lr_tensor(lc_v_tensor[0, :, :])
-    c_vt_tensor = torch.mul(lc_v_tensor[1, :, :], torch.div(l_vt_tensor, lc_v_tensor[0, :, :]))
+    c_vt_tensor = lc_v_tensor[1, :, :] * (l_vt_tensor / lc_v_tensor[0, :, :])
 
     l_new_tensor = ok_l_from_lr_tensor(lc_tensor[0, :, :])
-    lc_tensor[1, :, :] = torch.mul(lc_tensor[1, :, :], torch.div(l_new_tensor, lc_tensor[0, :, :]))
+    # Use in-place multiplication to save memory
+    lc_tensor[1, :, :] = lc_tensor[1, :, :] * (l_new_tensor / lc_tensor[0, :, :])
     lc_tensor[0, :, :] = l_new_tensor
 
     rgb_scale_tensor = linear_srgb_from_oklab(
         torch.stack(
             [
                 l_vt_tensor,
-                torch.mul(units_ab_tensor[0, :, :], c_vt_tensor),
-                torch.mul(units_ab_tensor[1, :, :], c_vt_tensor),
+                units_ab_tensor[0, :, :] * c_vt_tensor,
+                units_ab_tensor[1, :, :] * c_vt_tensor,
             ]
         )
     )
-
-    scale_l_tensor = torch.pow(
-        torch.div(1.0, torch.max(rgb_scale_tensor.max(0).values, torch.zeros(rgb_scale_tensor.shape[1:]))), 1.0 / 3.0
-    )
-    lc_tensor = torch.mul(lc_tensor, scale_l_tensor.expand(lc_tensor.shape))
+    # Avoid repeated allocation of zeros tensor
+    zero_tensor = _get_zero_tensor(rgb_scale_tensor.shape[1:], rgb_scale_tensor.device, rgb_scale_tensor.dtype)
+    scale_l_tensor = torch.pow(torch.div(1.0, torch.max(rgb_scale_tensor.max(0).values, zero_tensor)), 1.0 / 3.0)
+    lc_tensor = lc_tensor * scale_l_tensor.expand(lc_tensor.shape)
 
     rgb_tensor = linear_srgb_from_oklab(
         torch.stack(
             [
                 lc_tensor[0, :, :],
-                torch.mul(units_ab_tensor[0, :, :], lc_tensor[1, :, :]),
-                torch.mul(units_ab_tensor[1, :, :], lc_tensor[1, :, :]),
+                units_ab_tensor[0, :, :] * lc_tensor[1, :, :],
+                units_ab_tensor[1, :, :] * lc_tensor[1, :, :],
             ]
         )
     )
 
     rgb_tensor = srgb_from_linear_srgb(rgb_tensor, alpha=alpha, steps=steps)
-    return torch.where(torch.isnan(rgb_tensor), 0.0, rgb_tensor).clamp(0.0, 1.0)
+    # Use .nan_to_num instead of torch.where(torch.isnan(...)) for faster and less memory use
+    rgb_tensor = torch.nan_to_num(rgb_tensor, nan=0.0).clamp(0.0, 1.0)
+    return rgb_tensor
 
 
 def okhsv_from_srgb(srgb_tensor: torch.Tensor, steps: int = 1):
@@ -972,6 +977,14 @@ def remove_nans(tensor: torch.Tensor, replace_with: float = MAX_FLOAT):
 
 def tensor_from_pil_image(img: Image.Image, normalize: bool = False):
     return image_resized_to_grid_as_tensor(img, normalize=normalize, multiple_of=1)
+
+
+def _get_zero_tensor(shape, device, dtype):
+    # Minimize repeated allocation of zero tensor for .max()
+    key = (shape, device, dtype)
+    if key not in _ZERO_TENSOR_CACHE:
+        _ZERO_TENSOR_CACHE[key] = torch.zeros(shape, device=device, dtype=dtype)
+    return _ZERO_TENSOR_CACHE[key]
 
 
 # PSF LICENSE AGREEMENT FOR PYTHON 3.11.5
