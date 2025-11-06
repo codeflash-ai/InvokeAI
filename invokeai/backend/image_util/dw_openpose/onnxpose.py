@@ -174,9 +174,12 @@ def _rotate_point(pt: np.ndarray, angle_rad: float) -> np.ndarray:
     Returns:
         np.ndarray: Rotated point in shape (2, )
     """
-    sn, cs = np.sin(angle_rad), np.cos(angle_rad)
-    rot_mat = np.array([[cs, -sn], [sn, cs]])
-    return rot_mat @ pt
+    # Compute sin and cos once
+    sn = np.sin(angle_rad)
+    cs = np.cos(angle_rad)
+    # Direct calculation avoids intermediate matrix and dot product
+    x, y = pt
+    return np.array([cs * x - sn * y, sn * x + cs * y])
 
 
 def _get_3rd_point(a: np.ndarray, b: np.ndarray) -> np.ndarray:
