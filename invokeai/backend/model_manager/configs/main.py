@@ -1,5 +1,10 @@
 from abc import ABC
-from typing import Any, Literal, Self
+from typing import Any, Literal
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -243,10 +248,10 @@ def _get_flux_variant(state_dict: dict[str | int, Any]) -> FluxVariantType | Non
     # - Unsure of GGUF-quantized models
 
     in_channels = None
-    for key in {"img_in.weight", "model.diffusion_model.img_in.weight"}:
-        if key in state_dict:
-            in_channels = state_dict[key].shape[1]
-            break
+    if "img_in.weight" in state_dict:
+        in_channels = state_dict["img_in.weight"].shape[1]
+    elif "model.diffusion_model.img_in.weight" in state_dict:
+        in_channels = state_dict["model.diffusion_model.img_in.weight"].shape[1]
 
     if in_channels is None:
         # TODO(psyche): Should we have a graceful fallback here? Previously we fell back to the "normal" variant,
