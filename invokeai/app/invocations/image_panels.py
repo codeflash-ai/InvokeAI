@@ -52,8 +52,9 @@ class ImagePanelLayoutInvocation(BaseInvocation):
         return v
 
     def invoke(self, context: InvocationContext) -> ImagePanelCoordinateOutput:
-        x_left = self.panel_col_idx * (self.width // self.num_cols)
-        y_top = self.panel_row_idx * (self.height // self.num_rows)
-        width = self.width // self.num_cols
-        height = self.height // self.num_rows
-        return ImagePanelCoordinateOutput(x_left=x_left, y_top=y_top, width=width, height=height)
+        # Compute width and height of a single panel only once and reuse
+        panel_width = self.width // self.num_cols
+        panel_height = self.height // self.num_rows
+        x_left = self.panel_col_idx * panel_width
+        y_top = self.panel_row_idx * panel_height
+        return ImagePanelCoordinateOutput(x_left=x_left, y_top=y_top, width=panel_width, height=panel_height)
