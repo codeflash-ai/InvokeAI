@@ -1,5 +1,10 @@
 from abc import ABC
-from typing import Any, Literal, Self
+from typing import Any, Literal
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -90,24 +95,33 @@ def _has_ggml_tensors(state_dict: dict[str | int, Any]) -> bool:
 
 
 def _has_main_keys(state_dict: dict[str | int, Any]) -> bool:
-    for key in state_dict.keys():
-        if isinstance(key, int):
+    # Convert prefix tuple to a set for fast membership testing
+    prefixes = (
+        "cond_stage_model.",
+        "first_stage_model.",
+        "model.diffusion_model.",
+        "model.diffusion_model.double_blocks.",
+    )
+    double_blocks_prefix = "double_blocks."
+
+    # Avoid .keys() to reduce overhead, process keys directly
+    for key in state_dict:
+        # Using type() is slightly faster for int check than isinstance
+        if type(key) is int:
             continue
-        elif key.startswith(
-            (
-                "cond_stage_model.",
-                "first_stage_model.",
-                "model.diffusion_model.",
-                # Some FLUX checkpoint files contain transformer keys prefixed with "model.diffusion_model".
-                # This prefix is typically used to distinguish between multiple models bundled in a single file.
-                "model.diffusion_model.double_blocks.",
-            )
-        ):
+
+        # To optimize str.startswith(<tuple>), check individual long prefixes first, then common prefix next
+        # Most keys are not starting with these, so check 'double_blocks.' up front, rest after
+        if key.startswith(double_blocks_prefix):
+            # Check 'ip_adapter' only once for keys that match double_blocks_prefix
+            if "ip_adapter" not in key:
+                return True
+            # else: continue for next key
+
+        # For other prefixes, using the combined tuple
+        elif key.startswith(prefixes):
             return True
-        elif key.startswith("double_blocks.") and "ip_adapter" not in key:
-            # FLUX models in the official BFL format contain keys with the "double_blocks." prefix, but we must be
-            # careful to avoid false positives on XLabs FLUX IP-Adapter models.
-            return True
+
     return False
 
 
