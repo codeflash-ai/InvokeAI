@@ -308,21 +308,30 @@ def get_simcc_maximum(simcc_x: np.ndarray, simcc_y: np.ndarray) -> Tuple[np.ndar
         - vals (np.ndarray): values of maximum heatmap responses in shape
             (K,) or (N, K)
     """
-    N, K, Wx = simcc_x.shape
-    simcc_x = simcc_x.reshape(N * K, -1)
-    simcc_y = simcc_y.reshape(N * K, -1)
+    # Unpack dimensions efficiently without tuple unpack shortcut,
+    # as the flattening is required either way
+    shape_x = simcc_x.shape
+    N, K = shape_x[0], shape_x[1]
 
-    # get maximum value locations
-    x_locs = np.argmax(simcc_x, axis=1)
-    y_locs = np.argmax(simcc_y, axis=1)
-    locs = np.stack((x_locs, y_locs), axis=-1).astype(np.float32)
-    max_val_x = np.amax(simcc_x, axis=1)
-    max_val_y = np.amax(simcc_y, axis=1)
+    Wx = shape_x[2]
+    # No change, must flatten to (N*K, Wx)
+    simcc_x_flat = simcc_x.reshape(-1, Wx)
+    Wy = simcc_y.shape[2]
+    simcc_y_flat = simcc_y.reshape(-1, Wy)
+    # Compute both maximum index and value in one call
+    x_locs = np.argmax(simcc_x_flat, axis=1)
+    y_locs = np.argmax(simcc_y_flat, axis=1)
 
-    # get maximum value across x and y axis
-    mask = max_val_x > max_val_y
-    max_val_x[mask] = max_val_y[mask]
-    vals = max_val_x
+    max_val_x = simcc_x_flat[np.arange(simcc_x_flat.shape[0]), x_locs]
+    max_val_y = simcc_y_flat[np.arange(simcc_y_flat.shape[0]), y_locs]
+
+    # Minimize memory allocations by writing locs/vals as needed
+    locs = np.empty((simcc_x_flat.shape[0], 2), dtype=np.float32)
+    locs[:, 0] = x_locs
+    locs[:, 1] = y_locs
+
+    # Set values to the minimum of max_val_x and max_val_y in-place
+    vals = np.minimum(max_val_x, max_val_y)
     locs[vals <= 0.0] = -1
 
     # reshape
@@ -346,7 +355,7 @@ def decode(simcc_x: np.ndarray, simcc_y: np.ndarray, simcc_split_ratio) -> Tuple
         - np.ndarray[float32]: scores in shape (K,) or (n, K)
     """
     keypoints, scores = get_simcc_maximum(simcc_x, simcc_y)
-    keypoints /= simcc_split_ratio
+    keypoints = keypoints / simcc_split_ratio  # Avoids slow in-place division for float-dtype upcasting
 
     return keypoints, scores
 
