@@ -1,10 +1,7 @@
-from typing import (
-    Literal,
-    Self,
-)
+from typing import Literal
 
 from pydantic import Field
-from typing_extensions import Any
+from typing_extensions import Any, Self
 
 from invokeai.backend.model_manager.configs.base import Config_Base, Diffusers_Config_Base
 from invokeai.backend.model_manager.configs.controlnet import ControlAdapterDefaultSettings
