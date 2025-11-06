@@ -133,7 +133,7 @@ def pixel_perfect_resolution(
 
 def clone_contiguous(x: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     """Get a memory-contiguous clone of the given numpy array, as a safety measure and to improve computation efficiency."""
-    return np.ascontiguousarray(x).copy()
+    return np.ascontiguousarray(x)
 
 
 def np_img_to_torch(np_img: np.ndarray[Any, Any], device: torch.device) -> torch.Tensor:
