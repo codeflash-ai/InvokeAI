@@ -100,7 +100,7 @@ class BulkDownloadService(BulkDownloadBase):
     # from https://stackoverflow.com/questions/7406102/create-sane-safe-filename-from-any-unsafe-string
     def _clean_string_to_path_safe(self, s: str) -> str:
         """Clean a string to be path safe."""
-        return "".join([c for c in s if c.isalpha() or c.isdigit() or c == " " or c == "_" or c == "-"]).rstrip()
+        return "".join([c for c in s if c.isalnum() or c in {" ", "_", "-"}]).rstrip()
 
     def _signal_job_started(
         self, bulk_download_id: str, bulk_download_item_id: str, bulk_download_item_name: str
