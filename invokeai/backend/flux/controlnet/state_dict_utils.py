@@ -62,64 +62,71 @@ def _convert_flux_double_block_sd_from_diffusers_to_bfl_format(
     new_sd: dict[str, torch.Tensor] = {}
 
     # Check one key to determine if this block exists.
-    if f"{from_prefix}.attn.add_q_proj.bias" not in sd:
+    attn_q_proj_bias_key = f"{from_prefix}.attn.add_q_proj.bias"
+    if attn_q_proj_bias_key not in sd:
         return new_sd
 
     # txt_attn.qkv
+
+    # Precompute keys to minimize string concatenation cost
+    pop = sd.pop  # Local variable for faster access inside tight loops
+
+    # txt_attn.qkv
     new_sd[f"{to_prefix}.txt_attn.qkv.bias"] = _fuse_weights(
-        sd.pop(f"{from_prefix}.attn.add_q_proj.bias"),
-        sd.pop(f"{from_prefix}.attn.add_k_proj.bias"),
-        sd.pop(f"{from_prefix}.attn.add_v_proj.bias"),
+        pop(f"{from_prefix}.attn.add_q_proj.bias"),
+        pop(f"{from_prefix}.attn.add_k_proj.bias"),
+        pop(f"{from_prefix}.attn.add_v_proj.bias"),
     )
     new_sd[f"{to_prefix}.txt_attn.qkv.weight"] = _fuse_weights(
-        sd.pop(f"{from_prefix}.attn.add_q_proj.weight"),
-        sd.pop(f"{from_prefix}.attn.add_k_proj.weight"),
-        sd.pop(f"{from_prefix}.attn.add_v_proj.weight"),
+        pop(f"{from_prefix}.attn.add_q_proj.weight"),
+        pop(f"{from_prefix}.attn.add_k_proj.weight"),
+        pop(f"{from_prefix}.attn.add_v_proj.weight"),
     )
 
     # img_attn.qkv
     new_sd[f"{to_prefix}.img_attn.qkv.bias"] = _fuse_weights(
-        sd.pop(f"{from_prefix}.attn.to_q.bias"),
-        sd.pop(f"{from_prefix}.attn.to_k.bias"),
-        sd.pop(f"{from_prefix}.attn.to_v.bias"),
+        pop(f"{from_prefix}.attn.to_q.bias"),
+        pop(f"{from_prefix}.attn.to_k.bias"),
+        pop(f"{from_prefix}.attn.to_v.bias"),
     )
     new_sd[f"{to_prefix}.img_attn.qkv.weight"] = _fuse_weights(
-        sd.pop(f"{from_prefix}.attn.to_q.weight"),
-        sd.pop(f"{from_prefix}.attn.to_k.weight"),
-        sd.pop(f"{from_prefix}.attn.to_v.weight"),
+        pop(f"{from_prefix}.attn.to_q.weight"),
+        pop(f"{from_prefix}.attn.to_k.weight"),
+        pop(f"{from_prefix}.attn.to_v.weight"),
     )
 
-    # Handle basic 1-to-1 key conversions.
-    key_map = {
+    # Prepare all from_key and to_key pairs in advance to avoid repeat f-string formatting
+    # Unroll the loop for this one-time short mapping (<20 keys); use a list of tuples for memory layout/CPU cache efficiency
+    key_map = [
         # img_attn
-        "attn.norm_k.weight": "img_attn.norm.key_norm.scale",
-        "attn.norm_q.weight": "img_attn.norm.query_norm.scale",
-        "attn.to_out.0.weight": "img_attn.proj.weight",
-        "attn.to_out.0.bias": "img_attn.proj.bias",
+        ("attn.norm_k.weight", "img_attn.norm.key_norm.scale"),
+        ("attn.norm_q.weight", "img_attn.norm.query_norm.scale"),
+        ("attn.to_out.0.weight", "img_attn.proj.weight"),
+        ("attn.to_out.0.bias", "img_attn.proj.bias"),
         # img_mlp
-        "ff.net.0.proj.weight": "img_mlp.0.weight",
-        "ff.net.0.proj.bias": "img_mlp.0.bias",
-        "ff.net.2.weight": "img_mlp.2.weight",
-        "ff.net.2.bias": "img_mlp.2.bias",
+        ("ff.net.0.proj.weight", "img_mlp.0.weight"),
+        ("ff.net.0.proj.bias", "img_mlp.0.bias"),
+        ("ff.net.2.weight", "img_mlp.2.weight"),
+        ("ff.net.2.bias", "img_mlp.2.bias"),
         # img_mod
-        "norm1.linear.weight": "img_mod.lin.weight",
-        "norm1.linear.bias": "img_mod.lin.bias",
+        ("norm1.linear.weight", "img_mod.lin.weight"),
+        ("norm1.linear.bias", "img_mod.lin.bias"),
         # txt_attn
-        "attn.norm_added_q.weight": "txt_attn.norm.query_norm.scale",
-        "attn.norm_added_k.weight": "txt_attn.norm.key_norm.scale",
-        "attn.to_add_out.weight": "txt_attn.proj.weight",
-        "attn.to_add_out.bias": "txt_attn.proj.bias",
+        ("attn.norm_added_q.weight", "txt_attn.norm.query_norm.scale"),
+        ("attn.norm_added_k.weight", "txt_attn.norm.key_norm.scale"),
+        ("attn.to_add_out.weight", "txt_attn.proj.weight"),
+        ("attn.to_add_out.bias", "txt_attn.proj.bias"),
         # txt_mlp
-        "ff_context.net.0.proj.weight": "txt_mlp.0.weight",
-        "ff_context.net.0.proj.bias": "txt_mlp.0.bias",
-        "ff_context.net.2.weight": "txt_mlp.2.weight",
-        "ff_context.net.2.bias": "txt_mlp.2.bias",
+        ("ff_context.net.0.proj.weight", "txt_mlp.0.weight"),
+        ("ff_context.net.0.proj.bias", "txt_mlp.0.bias"),
+        ("ff_context.net.2.weight", "txt_mlp.2.weight"),
+        ("ff_context.net.2.bias", "txt_mlp.2.bias"),
         # txt_mod
-        "norm1_context.linear.weight": "txt_mod.lin.weight",
-        "norm1_context.linear.bias": "txt_mod.lin.bias",
-    }
-    for from_key, to_key in key_map.items():
-        new_sd[f"{to_prefix}.{to_key}"] = sd.pop(f"{from_prefix}.{from_key}")
+        ("norm1_context.linear.weight", "txt_mod.lin.weight"),
+        ("norm1_context.linear.bias", "txt_mod.lin.bias"),
+    ]
+    for from_key, to_key in key_map:
+        new_sd[f"{to_prefix}.{to_key}"] = pop(f"{from_prefix}.{from_key}")
 
     return new_sd
 
