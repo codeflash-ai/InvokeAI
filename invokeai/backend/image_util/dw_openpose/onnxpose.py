@@ -63,18 +63,17 @@ def inference(sess: ort.InferenceSession, img: np.ndarray) -> np.ndarray:
         outputs (np.ndarray): Output of RTMPose model.
     """
     all_out = []
-    # build input
-    for i in range(len(img)):
-        input = [img[i].transpose(2, 0, 1)]
+    # Cache model input and output names outside the loop for efficiency
+    input_name = sess.get_inputs()[0].name
+    output_names = [out.name for out in sess.get_outputs()]
 
-        # build output
-        sess_input = {sess.get_inputs()[0].name: input}
-        sess_output = []
-        for out in sess.get_outputs():
-            sess_output.append(out.name)
-
-        # run model
-        outputs = sess.run(sess_output, sess_input)
+    # Use list comprehension and avoid per-image Python loop-by-loop for better cache locality
+    # Pre-transpose all images in a single step.
+    transposed_imgs = img.transpose(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+    # Model expects input as: [array] per sample
+    for i in range(len(transposed_imgs)):
+        input = [transposed_imgs[i]]
+        outputs = sess.run(output_names, {input_name: input})
         all_out.append(outputs)
 
     return all_out
