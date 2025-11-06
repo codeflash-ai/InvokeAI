@@ -194,7 +194,7 @@ def _get_3rd_point(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: The 3rd point.
     """
     direction = a - b
-    c = b + np.r_[-direction[1], direction[0]]
+    c = b + np.array([-direction[1], direction[0]], dtype=direction.dtype)
     return c
 
 
