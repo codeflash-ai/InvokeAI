@@ -31,16 +31,17 @@ def is_state_dict_instantx_controlnet(sd: dict[str | int, Any]) -> bool:
     This is intended to be a reasonably high-precision detector, but it is not guaranteed to have perfect precision.
     """
     # If all of the expected keys are present, then this is very likely an InstantX ControlNet model.
-    expected_keys = {
+    expected_keys = (
         "controlnet_blocks.0.bias",
         "controlnet_blocks.0.weight",
         "controlnet_x_embedder.bias",
         "controlnet_x_embedder.weight",
-    }
+    )
 
-    if expected_keys.issubset(sd.keys()):
-        return True
-    return False
+    for key in expected_keys:
+        if key not in sd:
+            return False
+    return True
 
 
 def _fuse_weights(*t: torch.Tensor) -> torch.Tensor:
