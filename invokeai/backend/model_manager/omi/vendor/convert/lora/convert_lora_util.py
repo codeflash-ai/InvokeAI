@@ -87,12 +87,12 @@ class LoraConversionKeySet:
 def combine(left: str, right: str) -> str:
     left = left.rstrip(".")
     right = right.lstrip(".")
-    if left == "" or left is None:
+    if not left:
         return right
-    elif right == "" or right is None:
+    elif not right:
         return left
     else:
-        return left + "." + right
+        return f"{left}.{right}"
 
 
 def map_prefix_range(
