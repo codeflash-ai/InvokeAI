@@ -125,6 +125,10 @@ def __convert(
         return dict(state_dict)
 
     # TODO: maybe replace with a non O(n^2) algorithm
+
+    # Cache for next_prefix checks to avoid repeated O(n) scanning
+    next_prefix_cache = {}
+
     for key, tensor in state_dict.items():
         for key_set in key_sets:
             in_prefix = ""
@@ -148,7 +152,10 @@ def __convert(
                 elif source == "legacy_diffusers":
                     next_prefix = key_set.next_legacy_diffusers_prefix
 
-                is_last = not any(k.startswith(next_prefix) for k in state_dict)
+                if next_prefix not in next_prefix_cache:
+                    next_prefix_cache[next_prefix] = any(k.startswith(next_prefix) for k in state_dict)
+                is_last = not next_prefix_cache[next_prefix]
+
                 if key_set.filter_is_last != is_last:
                     continue
 
@@ -170,18 +177,30 @@ def __detect_source(
     state_dict: dict[str, Tensor],
     key_sets: list[LoraConversionKeySet],
 ) -> str:
+    # Precompute possible prefixes for all key_sets
+    omi_prefixes = [ks.omi_prefix for ks in key_sets]
+    diffusers_prefixes = [ks.diffusers_prefix for ks in key_sets]
+    legacy_diffusers_prefixes = [ks.legacy_diffusers_prefix for ks in key_sets]
+
     omi_count = 0
     diffusers_count = 0
     legacy_diffusers_count = 0
 
+    # Compile all prefixes into sets for startswith
+    # To optimize multiple prefix checks, group prefixes by length so we can avoid substring calculations
+    # Since startswith accepts a tuple, we can do tuple-checks per lookup, which is highly optimized in CPython
+    omi_tuple = tuple(omi_prefixes)
+    diffusers_tuple = tuple(diffusers_prefixes)
+    legacy_diffusers_tuple = tuple(legacy_diffusers_prefixes)
+
+    # Only count once per key, using tuple-of-prefixes for startswith check:
     for key in state_dict:
-        for key_set in key_sets:
-            if key.startswith(key_set.omi_prefix):
-                omi_count += 1
-            if key.startswith(key_set.diffusers_prefix):
-                diffusers_count += 1
-            if key.startswith(key_set.legacy_diffusers_prefix):
-                legacy_diffusers_count += 1
+        if key.startswith(omi_tuple):
+            omi_count += 1
+        if key.startswith(diffusers_tuple):
+            diffusers_count += 1
+        if key.startswith(legacy_diffusers_tuple):
+            legacy_diffusers_count += 1
 
     if omi_count > diffusers_count and omi_count > legacy_diffusers_count:
         return "omi"
