@@ -15,9 +15,7 @@ class CustomConv1d(torch.nn.Conv1d, CustomModuleMixin):
         bias = cast_to_device(self.bias, input.device)
 
         # Prepare the original parameters for the patch aggregation.
-        orig_params = {"weight": weight, "bias": bias}
-        # Filter out None values.
-        orig_params = {k: v for k, v in orig_params.items() if v is not None}
+        orig_params = {k: v for k, v in {"weight": weight, "bias": bias}.items() if v is not None}
 
         aggregated_param_residuals = self._aggregate_patch_parameters(
             patches_and_weights=self._patches_and_weights,
