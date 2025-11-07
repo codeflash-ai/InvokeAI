@@ -16,15 +16,38 @@ def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, attn_mask: Tensor | N
 
 def rope(pos: Tensor, dim: int, theta: int) -> Tensor:
     assert dim % 2 == 0
-    scale = (
-        torch.arange(0, dim, 2, dtype=torch.float32 if pos.device.type == "mps" else torch.float64, device=pos.device)
-        / dim
-    )
+    device = pos.device
+    pos_dtype = pos.dtype
+
+    # Precompute scale and omega with the proper dtype up front
+    if device.type == "mps":
+        arange_dtype = torch.float32
+    else:
+        arange_dtype = torch.float64
+
+    scale = torch.arange(0, dim, 2, dtype=arange_dtype, device=device) / dim
     omega = 1.0 / (theta**scale)
-    out = torch.einsum("...n,d->...nd", pos, omega)
-    out = torch.stack([torch.cos(out), -torch.sin(out), torch.sin(out), torch.cos(out)], dim=-1)
-    out = rearrange(out, "b n d (i j) -> b n d i j", i=2, j=2)
-    return out.to(dtype=pos.dtype, device=pos.device)
+
+    # Compute cos/sin and stack directly for maximum reuse and parallelism
+    # Replace einsum with broadcasting for efficiency
+    # out shape (..., n, d), omega shape (d,), broadcast to (..., n, d)
+    out = pos.unsqueeze(-1) * omega  # (..., n) x (d,) -> (..., n, d)
+    # To ensure same memory layout/order as einsum, expand on demand
+    # Compute sin and cos once
+    cos_out = torch.cos(out)
+    sin_out = torch.sin(out)
+    stacked = torch.stack((cos_out, -sin_out, sin_out, cos_out), dim=-1)
+
+    # rearrange [b, n, d, 4] -> [b, n, d, 2, 2] (where 4 = 2 x 2)
+    # Fast path: use contiguous reshape as 4 -> 2,2
+    b, n, d, four = stacked.shape
+    # Ensure the stacked dimension is always 4; if not, fallback to einops (should never happen)
+    if four == 4:
+        out2 = stacked.view(b, n, d, 2, 2)
+    else:
+        out2 = rearrange(stacked, "b n d (i j) -> b n d i j", i=2, j=2)
+
+    return out2.to(dtype=pos_dtype, device=device)
 
 
 def apply_rope(xq: Tensor, xk: Tensor, freqs_cis: Tensor) -> tuple[Tensor, Tensor]:
