@@ -20,14 +20,24 @@ def create_tile_pool(img_array: np.ndarray, tile_size: tuple[int, int]) -> list[
     rows, cols = img_array.shape[:2]
     tile_width, tile_height = tile_size
 
-    for y in range(0, rows - tile_height + 1, tile_height):
-        for x in range(0, cols - tile_width + 1, tile_width):
-            tile = img_array[y : y + tile_height, x : x + tile_width]
-            # Check if the image has an alpha channel and the tile is completely opaque
-            if img_array.shape[2] == 4 and np.all(tile[:, :, 3] == 255):
-                tiles.append(tile)
-            elif img_array.shape[2] == 3:  # If no alpha channel, append the tile
-                tiles.append(tile)
+    # Check if the image has an alpha channel and handle accordingly
+    if img_array.shape[2] == 4:
+        tiles.extend(
+            [
+                img_array[y : y + tile_height, x : x + tile_width]
+                for y in range(0, rows - tile_height + 1, tile_height)
+                for x in range(0, cols - tile_width + 1, tile_width)
+                if np.all(img_array[y : y + tile_height, x : x + tile_width, 3] == 255)
+            ]
+        )
+    elif img_array.shape[2] == 3:  # If no alpha channel, append all tiles
+        tiles.extend(
+            [
+                img_array[y : y + tile_height, x : x + tile_width]
+                for y in range(0, rows - tile_height + 1, tile_height)
+                for x in range(0, cols - tile_width + 1, tile_width)
+            ]
+        )
 
     if not tiles:
         raise ValueError(
