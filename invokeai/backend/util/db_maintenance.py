@@ -329,9 +329,10 @@ class InvokeAIDatabaseMaintenanceApp:
         """Ask user whether they want to continue with the operation."""
         while True:
             input_choice = input("Do you wish to continue? (Y or N)? ")
-            if str.lower(input_choice) == "y":
+            input_choice_norm = str.lower(input_choice)
+            if input_choice_norm == "y":
                 return True
-            if str.lower(input_choice) == "n":
+            if input_choice_norm == "n":
                 return False
 
     def clean_orphaned_db_entries(
