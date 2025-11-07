@@ -61,6 +61,12 @@ from invokeai.backend.util.util import slugify
 if TYPE_CHECKING:
     from invokeai.app.services.events.events_base import EventServiceBase
 
+_VARIANTS_JOINED = "|".join(ModelRepoVariant.__members__.values())
+
+_HF_REPOID_RE = re.compile(f"^([^/:]+/[^/:]+)(?::({_VARIANTS_JOINED})?(?::/?([^:]+))?)?$")
+
+_URL_RE = re.compile(r"^https?://[^/]+")
+
 
 TMPDIR_PREFIX = "tmpinstall_"
 
@@ -237,10 +243,13 @@ class ModelInstallService(ModelInstallServiceBase):
         return self.import_model(source_obj, config)
 
     def import_model(self, source: ModelSource, config: Optional[ModelRecordChanges] = None) -> ModelInstallJob:  # noqa D102
-        similar_jobs = [x for x in self.list_jobs() if x.source == source and not x.in_terminal_state]
-        if similar_jobs:
+        # Small optimization: check similar_jobs using generator to bail early
+        similar_job = next((x for x in self.list_jobs() if x.source == source and not x.in_terminal_state), None)
+        if similar_job is not None:
             self._logger.warning(f"There is already an active install job for {source}. Not enqueuing.")
-            return similar_jobs[0]
+            return similar_job
+
+        # Normal flow, use elif branch to only ever hit one _import_xxx
 
         if isinstance(source, LocalModelSource):
             install_job = self._import_local_model(source, config)
@@ -463,25 +472,26 @@ class ModelInstallService(ModelInstallServiceBase):
 
     def _guess_source(self, source: str) -> ModelSource:
         """Turn a source string into a ModelSource object."""
-        variants = "|".join(ModelRepoVariant.__members__.values())
-        hf_repoid_re = f"^([^/:]+/[^/:]+)(?::({variants})?(?::/?([^:]+))?)?$"
         source_obj: Optional[StringLikeSource] = None
         source_stripped = source.strip('"')
 
         if Path(source_stripped).exists():  # A local file or directory
             source_obj = LocalModelSource(path=Path(source_stripped))
-        elif match := re.match(hf_repoid_re, source):
-            source_obj = HFModelSource(
-                repo_id=match.group(1),
-                variant=ModelRepoVariant(match.group(2)) if match.group(2) else None,  # pass None rather than ''
-                subfolder=Path(match.group(3)) if match.group(3) else None,
-            )
-        elif re.match(r"^https?://[^/]+", source):
-            source_obj = URLModelSource(
-                url=Url(source),
-            )
         else:
-            raise ValueError(f"Unsupported model source: '{source}'")
+            # Try HuggingFace repo_id pattern (after failing Path.exists)
+            match = _HF_REPOID_RE.match(source)
+            if match:
+                source_obj = HFModelSource(
+                    repo_id=match.group(1),
+                    variant=ModelRepoVariant(match.group(2)) if match.group(2) else None,
+                    subfolder=Path(match.group(3)) if match.group(3) else None,
+                )
+            elif _URL_RE.match(source):
+                source_obj = URLModelSource(
+                    url=Url(source),
+                )
+            else:
+                raise ValueError(f"Unsupported model source: '{source}'")
         return source_obj
 
     # --------------------------------------------------------------------------------------------
