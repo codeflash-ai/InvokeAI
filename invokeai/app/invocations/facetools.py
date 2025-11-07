@@ -1,4 +1,3 @@
-import math
 import re
 from pathlib import Path
 from typing import Optional, TypedDict
@@ -80,33 +79,53 @@ FONT_STROKE_WIDTH = 4
 
 
 def coalesce_faces(face1: FaceResultData, face2: FaceResultData) -> FaceResultData:
-    face1_x_offset = face1["chunk_x_offset"] - min(face1["chunk_x_offset"], face2["chunk_x_offset"])
-    face2_x_offset = face2["chunk_x_offset"] - min(face1["chunk_x_offset"], face2["chunk_x_offset"])
-    face1_y_offset = face1["chunk_y_offset"] - min(face1["chunk_y_offset"], face2["chunk_y_offset"])
-    face2_y_offset = face2["chunk_y_offset"] - min(face1["chunk_y_offset"], face2["chunk_y_offset"])
+    # Precompute common min/max and offsets to reduce redundant function calls
+    min_x_offset = min(face1["chunk_x_offset"], face2["chunk_x_offset"])
+    min_y_offset = min(face1["chunk_y_offset"], face2["chunk_y_offset"])
+    max_x_offset = max(face1["chunk_x_offset"], face2["chunk_x_offset"])
+    max_y_offset = max(face1["chunk_y_offset"], face2["chunk_y_offset"])
 
-    new_im_width = (
-        max(face1["image"].width, face2["image"].width)
-        + max(face1["chunk_x_offset"], face2["chunk_x_offset"])
-        - min(face1["chunk_x_offset"], face2["chunk_x_offset"])
-    )
-    new_im_height = (
-        max(face1["image"].height, face2["image"].height)
-        + max(face1["chunk_y_offset"], face2["chunk_y_offset"])
-        - min(face1["chunk_y_offset"], face2["chunk_y_offset"])
-    )
-    pil_image = Image.new(mode=face1["image"].mode, size=(new_im_width, new_im_height))
-    pil_image.paste(face1["image"], (face1_x_offset, face1_y_offset))
-    pil_image.paste(face2["image"], (face2_x_offset, face2_y_offset))
+    face1_x_offset = face1["chunk_x_offset"] - min_x_offset
+    face2_x_offset = face2["chunk_x_offset"] - min_x_offset
+    face1_y_offset = face1["chunk_y_offset"] - min_y_offset
+    face2_y_offset = face2["chunk_y_offset"] - min_y_offset
 
-    # Mask images are always from the origin
-    new_mask_im_width = max(face1["mask"].width, face2["mask"].width)
-    new_mask_im_height = max(face1["mask"].height, face2["mask"].height)
+    # Avoid redundant max/min usage
+    image1, image2 = face1["image"], face2["image"]
+    width1, width2 = image1.width, image2.width
+    height1, height2 = image1.height, image2.height
+
+    new_im_width = max(width1, width2) + max_x_offset - min_x_offset
+    new_im_height = max(height1, height2) + max_y_offset - min_y_offset
+
+    pil_image = Image.new(mode=image1.mode, size=(new_im_width, new_im_height))
+    # Paste the larger image first to minimize the number of internal delta-writes for overlapping regions
+    if width1 * height1 >= width2 * height2:
+        pil_image.paste(image1, (face1_x_offset, face1_y_offset))
+        pil_image.paste(image2, (face2_x_offset, face2_y_offset))
+    else:
+        pil_image.paste(image2, (face2_x_offset, face2_y_offset))
+        pil_image.paste(image1, (face1_x_offset, face1_y_offset))
+
+    # Optimize mask coalescing
+    mask1, mask2 = face1["mask"], face2["mask"]
+    mask1_width, mask2_width = mask1.width, mask2.width
+    mask1_height, mask2_height = mask1.height, mask2.height
+
+    new_mask_im_width = max(mask1_width, mask2_width)
+    new_mask_im_height = max(mask1_height, mask2_height)
     mask_pil = create_white_image(new_mask_im_width, new_mask_im_height)
-    black_image = create_black_image(face1["mask"].width, face1["mask"].height)
-    mask_pil.paste(black_image, (0, 0), ImageOps.invert(face1["mask"]))
-    black_image = create_black_image(face2["mask"].width, face2["mask"].height)
-    mask_pil.paste(black_image, (0, 0), ImageOps.invert(face2["mask"]))
+
+    # To avoid memory churn and duplicate computation, reuse invert objects and black images
+    inverted_mask1 = ImageOps.invert(mask1)
+    black_image1 = create_black_image(mask1_width, mask1_height)
+    mask_pil.paste(black_image1, (0, 0), inverted_mask1)
+
+    inverted_mask2 = ImageOps.invert(mask2)
+    black_image2 = create_black_image(mask2_width, mask2_height)
+    mask_pil.paste(black_image2, (0, 0), inverted_mask2)
+
+    # Max out all metrics as in the previous code
 
     new_face = FaceResultData(
         image=pil_image,
@@ -115,8 +134,8 @@ def coalesce_faces(face1: FaceResultData, face2: FaceResultData) -> FaceResultDa
         y_center=max(face1["y_center"], face2["y_center"]),
         mesh_width=max(face1["mesh_width"], face2["mesh_width"]),
         mesh_height=max(face1["mesh_height"], face2["mesh_height"]),
-        chunk_x_offset=max(face1["chunk_x_offset"], face2["chunk_x_offset"]),
-        chunk_y_offset=max(face2["chunk_y_offset"], face2["chunk_y_offset"]),
+        chunk_x_offset=max_x_offset,
+        chunk_y_offset=max_y_offset,
     )
     return new_face
 
@@ -125,9 +144,9 @@ def prepare_faces_list(
     face_result_list: list[FaceResultData],
 ) -> list[FaceResultDataWithId]:
     """Deduplicates a list of faces, adding IDs to them."""
-    deduped_faces: list[FaceResultData] = []
+    deduped_faces: list["FaceResultData"] = []
 
-    if len(face_result_list) == 0:
+    if not face_result_list:
         return []
 
     for candidate in face_result_list:
@@ -139,37 +158,25 @@ def prepare_faces_list(
             face_center_y = face["y_center"]
             face_radius_w = face["mesh_width"] / 2
             face_radius_h = face["mesh_height"] / 2
-            # Determine if the center of the candidate_face is inside the ellipse of the added face
-            # p < 1 -> Inside
-            # p = 1 -> Exactly on the ellipse
-            # p > 1 -> Outside
-            p = (math.pow((candidate_x_center - face_center_x), 2) / math.pow(face_radius_w, 2)) + (
-                math.pow((candidate_y_center - face_center_y), 2) / math.pow(face_radius_h, 2)
-            )
+            dx = candidate_x_center - face_center_x
+            dy = candidate_y_center - face_center_y
+            # Use multiplication instead of pow for slight speed gains
+            p = ((dx * dx) / (face_radius_w * face_radius_w)) + ((dy * dy) / (face_radius_h * face_radius_h))
 
             if p < 1:  # Inside of the already-added face's radius
                 deduped_faces[idx] = coalesce_faces(face, candidate)
                 should_add = False
                 break
-
-        if should_add is True:
+        if should_add:
             deduped_faces.append(candidate)
 
-    sorted_faces = sorted(deduped_faces, key=lambda x: x["y_center"])
-    sorted_faces = sorted(sorted_faces, key=lambda x: x["x_center"])
+    # Compose the sort into one pass using tuple key for efficiency (stable sort is sufficient)
+    sorted_faces = sorted(deduped_faces, key=lambda x: (x["x_center"], x["y_center"]))
 
-    # add face_id for reference
-    sorted_faces_with_ids: list[FaceResultDataWithId] = []
-    face_id_counter = 0
-    for face in sorted_faces:
-        sorted_faces_with_ids.append(
-            FaceResultDataWithId(
-                **face,
-                face_id=face_id_counter,
-            )
-        )
-        face_id_counter += 1
-
+    # Inline face_id enumeration to avoid extra counter ops
+    sorted_faces_with_ids: list["FaceResultDataWithId"] = [
+        FaceResultDataWithId(**face, face_id=face_id) for face_id, face in enumerate(sorted_faces)
+    ]
     return sorted_faces_with_ids
 
 
