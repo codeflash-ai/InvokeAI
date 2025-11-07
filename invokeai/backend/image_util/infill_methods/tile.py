@@ -61,16 +61,26 @@ def create_filled_image(
     # Make the random tile selection reproducible
     rng = np.random.default_rng(seed)
 
-    for y in range(0, rows, tile_height):
-        for x in range(0, cols, tile_width):
-            # Pick a random tile from the pool
-            tile = tile_pool[rng.integers(len(tile_pool))]
+    # Pre-calculate the indices for tile positions
+    y_range = range(0, rows, tile_height)
+    x_range = range(0, cols, tile_width)
+    y_coords = np.array(list(y_range))
+    x_coords = np.array(list(x_range))
 
-            # Calculate the space available (may be less than tile size near the edges)
-            space_y = min(tile_height, rows - y)
+    num_tiles_y = len(y_coords)
+    num_tiles_x = len(x_coords)
+
+    # Select all random tile indices in a single call for better performance
+    tile_indices = rng.integers(len(tile_pool), size=(num_tiles_y, num_tiles_x))
+
+    # Loop over tile grid, minimizing Python overhead
+    for iy, y in enumerate(y_coords):
+        space_y = min(tile_height, rows - y)
+        for ix, x in enumerate(x_coords):
             space_x = min(tile_width, cols - x)
 
             # Crop the tile if necessary to fit into the available space
+            tile = tile_pool[tile_indices[iy, ix]]
             cropped_tile = tile[:space_y, :space_x, :3]
 
             # Fill the available space with the (possibly cropped) tile
