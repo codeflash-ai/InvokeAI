@@ -6,12 +6,13 @@ def preprocess_t5_encoder_model_identifier(model_identifier: ModelIdentifierFiel
     """A helper function to normalize a T5 encoder model identifier so that T5 models associated with FLUX
     or SD3 models can be used interchangeably.
     """
-    if model_identifier.base == BaseModelType.Any:
+    base = model_identifier.base
+    if base is BaseModelType.Any:
+        # Use "is" for Enum comparison for slightly faster and safer comparison
         return model_identifier.model_copy(update={"submodel_type": SubModelType.TextEncoder2})
-    elif model_identifier.base == BaseModelType.StableDiffusion3:
+    if base is BaseModelType.StableDiffusion3:
         return model_identifier.model_copy(update={"submodel_type": SubModelType.TextEncoder3})
-    else:
-        raise ValueError(f"Unsupported model base: {model_identifier.base}")
+    raise ValueError(f"Unsupported model base: {base}")
 
 
 def preprocess_t5_tokenizer_model_identifier(model_identifier: ModelIdentifierField) -> ModelIdentifierField:
