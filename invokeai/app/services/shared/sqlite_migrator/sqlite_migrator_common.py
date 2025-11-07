@@ -116,6 +116,7 @@ class MigrationSet:
 
     def __init__(self) -> None:
         self._migrations: set[Migration] = set()
+        self._migration_by_version: dict[int, Migration] = {}
 
     def register(self, migration: Migration) -> None:
         """Registers a migration."""
@@ -128,7 +129,11 @@ class MigrationSet:
     def get(self, from_version: int) -> Optional[Migration]:
         """Gets the migration that may be run on the given database version."""
         # register() ensures that there is only one migration with a given from_version, so this is safe.
-        return next((m for m in self._migrations if m.from_version == from_version), None)
+        if len(self._migration_by_version) != len(self._migrations):
+            self._migration_by_version.clear()
+            for m in self._migrations:
+                self._migration_by_version[m.from_version] = m
+        return self._migration_by_version.get(from_version)
 
     def validate_migration_chain(self) -> None:
         """
