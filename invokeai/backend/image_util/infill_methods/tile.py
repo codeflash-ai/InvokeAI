@@ -24,8 +24,10 @@ def create_tile_pool(img_array: np.ndarray, tile_size: tuple[int, int]) -> list[
         for x in range(0, cols - tile_width + 1, tile_width):
             tile = img_array[y : y + tile_height, x : x + tile_width]
             # Check if the image has an alpha channel and the tile is completely opaque
-            if img_array.shape[2] == 4 and np.all(tile[:, :, 3] == 255):
-                tiles.append(tile)
+            if img_array.shape[2] == 4:
+                # Use min() instead of np.all for better performance
+                if tile[:, :, 3].min() == 255:
+                    tiles.append(tile)
             elif img_array.shape[2] == 3:  # If no alpha channel, append the tile
                 tiles.append(tile)
 
@@ -61,10 +63,17 @@ def create_filled_image(
     # Make the random tile selection reproducible
     rng = np.random.default_rng(seed)
 
-    for y in range(0, rows, tile_height):
-        for x in range(0, cols, tile_width):
-            # Pick a random tile from the pool
-            tile = tile_pool[rng.integers(len(tile_pool))]
+    y_coords = np.arange(0, rows, tile_height)
+    x_coords = np.arange(0, cols, tile_width)
+    # Prepare random tile indices ahead of writing
+    total_tiles = len(y_coords) * len(x_coords)
+    rand_indices = rng.integers(len(tile_pool), size=total_tiles)
+
+    tile_idx = 0
+    for y in y_coords:
+        for x in x_coords:
+            tile = tile_pool[rand_indices[tile_idx]]
+            tile_idx += 1
 
             # Calculate the space available (may be less than tile size near the edges)
             space_y = min(tile_height, rows - y)
