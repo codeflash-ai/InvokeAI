@@ -28,17 +28,31 @@ class XLabsIPAdapterExtension:
 
         self._image_proj: torch.Tensor | None = None
 
+        # Precompute to optimize repetitive calls to _get_weight with same step counts
+        self._last_total_num_timesteps: int | None = None
+        self._first_step: int | None = None
+        self._last_step: int | None = None
+
     def _get_weight(self, timestep_index: int, total_num_timesteps: int) -> float:
-        first_step = math.floor(self._begin_step_percent * total_num_timesteps)
-        last_step = math.ceil(self._end_step_percent * total_num_timesteps)
+        # Avoid recomputation if step count is unchanged
+        if self._last_total_num_timesteps != total_num_timesteps:
+            self._first_step = int(self._begin_step_percent * total_num_timesteps)
+            # math.floor can be used directly on multiplication result for int
+            self._last_step = int(math.ceil(self._end_step_percent * total_num_timesteps))
+            self._last_total_num_timesteps = total_num_timesteps
+
+        first_step = self._first_step
+        last_step = self._last_step
 
         if timestep_index < first_step or timestep_index > last_step:
             return 0.0
 
-        if isinstance(self._weight, list):
-            return self._weight[timestep_index]
+        weight = self._weight
+        # Reorder type check to avoid isinstance for every possible call
+        if isinstance(weight, list):
+            return weight[timestep_index]
 
-        return self._weight
+        return weight
 
     @staticmethod
     def run_clip_image_encoder(
