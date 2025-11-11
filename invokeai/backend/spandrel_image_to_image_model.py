@@ -28,11 +28,10 @@ class SpandrelImageToImageModel(RawModel):
         Returns:
             torch.Tensor: A torch.Tensor with shape (N, C, H, W) and values in the range [0, 1].
         """
-        image_np = np.array(image)
+        image_np = np.array(image, dtype=np.float32) / 255.0
         # (H, W, C) -> (C, H, W)
         image_np = np.transpose(image_np, (2, 0, 1))
-        image_np = image_np / 255
-        image_tensor = torch.from_numpy(image_np).float()
+        image_tensor = torch.from_numpy(image_np)
         # (C, H, W) -> (N, C, H, W)
         image_tensor = image_tensor.unsqueeze(0)
         return image_tensor

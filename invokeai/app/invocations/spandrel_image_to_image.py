@@ -1,7 +1,6 @@
 import functools
 from typing import Callable
 
-import numpy as np
 import torch
 from PIL import Image
 from tqdm import tqdm
@@ -85,10 +84,10 @@ class SpandrelImageToImageInvocation(BaseInvocation, WithMetadata, WithBoard):
                 )
             ]
 
-        # Sort tiles first by left x coordinate, then by top y coordinate. During tile processing, we want to iterate
-        # over tiles left-to-right, top-to-bottom.
-        tiles = sorted(tiles, key=lambda x: x.coords.left)
-        tiles = sorted(tiles, key=lambda x: x.coords.top)
+        # Single pass tile sorting by (top, left) compound key for faster ordering
+        tiles = sorted(tiles, key=lambda x: (x.coords.top, x.coords.left))
+
+        # Prepare input image for inference.
 
         # Prepare input image for inference.
         image_tensor = SpandrelImageToImageModel.pil_to_tensor(image)
@@ -100,18 +99,18 @@ class SpandrelImageToImageInvocation(BaseInvocation, WithMetadata, WithBoard):
         # Prepare the output tensor.
         _, channels, height, width = image_tensor.shape
         output_tensor = torch.zeros(
-            (height * scale, width * scale, channels), dtype=torch.uint8, device=torch.device("cpu")
-        )
+            (height * scale, width * scale, channels), dtype=torch.uint8, device="cpu"
+        ).contiguous()
 
         image_tensor = image_tensor.to(device=TorchDevice.choose_torch_device(), dtype=spandrel_model.dtype)
 
-        # Run the model on each tile.
-        pbar = tqdm(list(zip(tiles, scaled_tiles, strict=True)), desc="Upscaling Tiles")
+        zipped_tiles = list(zip(tiles, scaled_tiles, strict=False))
+        pbar = tqdm(zipped_tiles, desc="Upscaling Tiles")
 
         # Update progress, starting with 0.
-        step_callback(0, pbar.total)
+        step_callback(0, len(zipped_tiles))
 
-        for tile, scaled_tile in pbar:
+        for idx, (tile, scaled_tile) in enumerate(zipped_tiles):
             # Exit early if the invocation has been canceled.
             if is_canceled():
                 raise CanceledException
@@ -122,13 +121,12 @@ class SpandrelImageToImageInvocation(BaseInvocation, WithMetadata, WithBoard):
             # Run the model on the tile.
             output_tile = spandrel_model.run(input_tile)
 
-            # Convert the output tile into the output tensor's format.
-            # (N, C, H, W) -> (C, H, W)
-            output_tile = output_tile.squeeze(0)
-            # (C, H, W) -> (H, W, C)
-            output_tile = output_tile.permute(1, 2, 0)
+            # (N, C, H, W) -> (C, H, W) -> (H, W, C)
+            output_tile = output_tile.squeeze(0).permute(1, 2, 0)
             output_tile = output_tile.clamp(0, 1)
-            output_tile = (output_tile * 255).to(dtype=torch.uint8, device=torch.device("cpu"))
+            output_tile = (output_tile * 255).to(dtype=torch.uint8, device="cpu")
+
+            # Compute overlaps and output region (as in original)
 
             # Merge the output tile into the output tensor.
             # We only keep half of the overlap on the top and left side of the tile. We do this in case there are
@@ -142,10 +140,10 @@ class SpandrelImageToImageInvocation(BaseInvocation, WithMetadata, WithBoard):
                 :,
             ] = output_tile[top_overlap:, left_overlap:, :]
 
-            step_callback(pbar.n + 1, pbar.total)
+            step_callback(idx + 1, len(zipped_tiles))
 
-        # Convert the output tensor to a PIL image.
-        np_image = output_tensor.detach().numpy().astype(np.uint8)
+        # Convert the output tensor to a PIL image. Use .cpu().numpy() for safety.
+        np_image = output_tensor.cpu().numpy()
         pil_image = Image.fromarray(np_image)
 
         return pil_image
