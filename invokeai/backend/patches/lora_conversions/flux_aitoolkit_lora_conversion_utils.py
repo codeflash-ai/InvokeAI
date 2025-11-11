@@ -23,7 +23,10 @@ def is_state_dict_likely_in_flux_aitoolkit_format(
             return False
         return software.get("name") == "ai-toolkit"
     # metadata got lost somewhere
-    return any("diffusion_model" == k.split(".", 1)[0] for k in state_dict.keys() if isinstance(k, str))
+    for k in state_dict.keys():
+        if isinstance(k, str) and k.startswith("diffusion_model") and (len(k) == 15 or (len(k) > 15 and k[15] == ".")):
+            return True
+    return False
 
 
 @dataclass
