@@ -7,7 +7,6 @@ import numpy as np
 import numpy.typing as npt
 import torch
 from cv2.typing import MatLike
-from tqdm import tqdm
 
 from invokeai.backend.image_util.basicsr.rrdbnet_arch import RRDBNet
 from invokeai.backend.model_manager.taxonomy import AnyModel
@@ -83,26 +82,33 @@ class RealESRGAN:
     def pre_process(self, img: MatLike) -> None:
         """Pre-process, such as pre-pad and mod pad, so that the images can be divisible"""
         img_tensor: torch.Tensor = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()
-        self.img = img_tensor.unsqueeze(0).to(self.device)
+        img_tensor = img_tensor.unsqueeze(0)
+        img_tensor = img_tensor.to(self.device)
         if self.half:
-            self.img = self.img.half()
+            img_tensor = img_tensor.half()
+
+        # pre_pad
 
         # pre_pad
         if self.pre_pad != 0:
-            self.img = torch.nn.functional.pad(self.img, (0, self.pre_pad, 0, self.pre_pad), "reflect")
+            img_tensor = torch.nn.functional.pad(img_tensor, (0, self.pre_pad, 0, self.pre_pad), "reflect")
+        # mod pad for divisible borders
         # mod pad for divisible borders
         if self.scale == 2:
             self.mod_scale = 2
         elif self.scale == 1:
             self.mod_scale = 4
         if self.mod_scale is not None:
-            self.mod_pad_h, self.mod_pad_w = 0, 0
-            _, _, h, w = self.img.size()
-            if h % self.mod_scale != 0:
-                self.mod_pad_h = self.mod_scale - h % self.mod_scale
-            if w % self.mod_scale != 0:
-                self.mod_pad_w = self.mod_scale - w % self.mod_scale
-            self.img = torch.nn.functional.pad(self.img, (0, self.mod_pad_w, 0, self.mod_pad_h), "reflect")
+            # minimize repeated accesses
+            _, _, h, w = img_tensor.size()
+            mod_pad_h = self.mod_scale - h % self.mod_scale if h % self.mod_scale != 0 else 0
+            mod_pad_w = self.mod_scale - w % self.mod_scale if w % self.mod_scale != 0 else 0
+            self.mod_pad_h = mod_pad_h
+            self.mod_pad_w = mod_pad_w
+            if mod_pad_h > 0 or mod_pad_w > 0:
+                img_tensor = torch.nn.functional.pad(img_tensor, (0, mod_pad_w, 0, mod_pad_h), "reflect")
+
+        self.img = img_tensor
 
     def process(self) -> None:
         # model inference
@@ -115,79 +121,78 @@ class RealESRGAN:
         Modified from: https://github.com/ata4/esrgan-launcher
         """
         batch, channel, height, width = self.img.shape
-        output_height = height * self.scale
-        output_width = width * self.scale
+        scale = self.scale
+        tile_size = self.tile_size
+        tile_pad = self.tile_pad
+
+        output_height = height * scale
+        output_width = width * scale
         output_shape = (batch, channel, output_height, output_width)
 
         # start with black image
-        self.output = self.img.new_zeros(output_shape)
-        tiles_x = math.ceil(width / self.tile_size)
-        tiles_y = math.ceil(height / self.tile_size)
+        result_img = self.img.new_zeros(output_shape)
+        tiles_x = math.ceil(width / tile_size)
+        tiles_y = math.ceil(height / tile_size)
 
         # loop over all tiles
         total_steps = tiles_y * tiles_x
-        for i in tqdm(range(total_steps), desc="Upscaling"):
-            y = i // tiles_x
-            x = i % tiles_x
-            # extract tile from input image
-            ofs_x = x * self.tile_size
-            ofs_y = y * self.tile_size
-            # input tile area on total image
-            input_start_x = ofs_x
-            input_end_x = min(ofs_x + self.tile_size, width)
+
+        # Precompute tile indices for efficiency
+        for y in range(tiles_y):
+            ofs_y = y * tile_size
             input_start_y = ofs_y
-            input_end_y = min(ofs_y + self.tile_size, height)
-
-            # input tile area on total image with padding
-            input_start_x_pad = max(input_start_x - self.tile_pad, 0)
-            input_end_x_pad = min(input_end_x + self.tile_pad, width)
-            input_start_y_pad = max(input_start_y - self.tile_pad, 0)
-            input_end_y_pad = min(input_end_y + self.tile_pad, height)
-
-            # input tile dimensions
-            input_tile_width = input_end_x - input_start_x
+            input_end_y = min(ofs_y + tile_size, height)
+            input_start_y_pad = max(input_start_y - tile_pad, 0)
+            input_end_y_pad = min(input_end_y + tile_pad, height)
             input_tile_height = input_end_y - input_start_y
-            input_tile = self.img[
-                :,
-                :,
-                input_start_y_pad:input_end_y_pad,
-                input_start_x_pad:input_end_x_pad,
-            ]
+            output_start_y = input_start_y * scale
+            output_end_y = input_end_y * scale
+            output_start_y_tile = (input_start_y - input_start_y_pad) * scale
+            output_end_y_tile = output_start_y_tile + input_tile_height * scale
+            for x in range(tiles_x):
+                i = y * tiles_x + x
+                # tqdm update only once per step for minimal profile impact
+                input_start_x = x * tile_size
+                input_end_x = min(input_start_x + tile_size, width)
+                input_start_x_pad = max(input_start_x - tile_pad, 0)
+                input_end_x_pad = min(input_end_x + tile_pad, width)
+                input_tile_width = input_end_x - input_start_x
 
-            # upscale tile
-            with torch.no_grad():
-                output_tile = self.model(input_tile)
+                output_start_x = input_start_x * scale
+                output_end_x = input_end_x * scale
+                output_start_x_tile = (input_start_x - input_start_x_pad) * scale
+                output_end_x_tile = output_start_x_tile + input_tile_width * scale
 
-            # output tile area on total image
-            output_start_x = input_start_x * self.scale
-            output_end_x = input_end_x * self.scale
-            output_start_y = input_start_y * self.scale
-            output_end_y = input_end_y * self.scale
+                input_tile = self.img[
+                    :,
+                    :,
+                    input_start_y_pad:input_end_y_pad,
+                    input_start_x_pad:input_end_x_pad,
+                ]
 
-            # output tile area without padding
-            output_start_x_tile = (input_start_x - input_start_x_pad) * self.scale
-            output_end_x_tile = output_start_x_tile + input_tile_width * self.scale
-            output_start_y_tile = (input_start_y - input_start_y_pad) * self.scale
-            output_end_y_tile = output_start_y_tile + input_tile_height * self.scale
+                with torch.no_grad():
+                    output_tile = self.model(input_tile)
 
-            # put tile into output image
-            self.output[:, :, output_start_y:output_end_y, output_start_x:output_end_x] = output_tile[
-                :,
-                :,
-                output_start_y_tile:output_end_y_tile,
-                output_start_x_tile:output_end_x_tile,
-            ]
+                result_img[:, :, output_start_y:output_end_y, output_start_x:output_end_x] = output_tile[
+                    :,
+                    :,
+                    output_start_y_tile:output_end_y_tile,
+                    output_start_x_tile:output_end_x_tile,
+                ]
+
+        self.output = result_img
 
     def post_process(self) -> torch.Tensor:
         # remove extra pad
         if self.mod_scale is not None:
             _, _, h, w = self.output.size()
-            self.output = self.output[
-                :,
-                :,
-                0 : h - self.mod_pad_h * self.scale,
-                0 : w - self.mod_pad_w * self.scale,
-            ]
+            if self.mod_pad_h > 0 or self.mod_pad_w > 0:
+                self.output = self.output[
+                    :,
+                    :,
+                    0 : h - self.mod_pad_h * self.scale,
+                    0 : w - self.mod_pad_w * self.scale,
+                ]
         # remove prepad
         if self.pre_pad != 0:
             _, _, h, w = self.output.size()
@@ -203,27 +208,36 @@ class RealESRGAN:
     def upscale(self, img: MatLike, esrgan_alpha_upscale: bool = True) -> npt.NDArray[Any]:
         np_img = img.astype(np.float32)
         alpha: Optional[np.ndarray] = None
-        if np.max(np_img) > 256:
+        # Avoid np.max(np_img) scan each time by using dtype directly if possible
+        if np_img.dtype == np.uint16 or np.max(np_img) > 256:
             # 16-bit image
             max_range = 65535
         else:
             max_range = 255
         np_img = np_img / max_range
-        if len(np_img.shape) == 2:
+
+        shape_len = len(np_img.shape)
+        img_mode = None
+        # Avoid repeatedly calculating channel count
+        if shape_len == 2:
             # grayscale image
             img_mode = ImageMode.L
             np_img = cv2.cvtColor(np_img, cv2.COLOR_GRAY2RGB)
-        elif np_img.shape[2] == 4:
-            # RGBA image with alpha channel
-            img_mode = ImageMode.RGBA
-            alpha = np_img[:, :, 3]
-            np_img = np_img[:, :, 0:3]
-            np_img = cv2.cvtColor(np_img, cv2.COLOR_BGR2RGB)
-            if esrgan_alpha_upscale:
-                alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
         else:
-            img_mode = ImageMode.RGB
-            np_img = cv2.cvtColor(np_img, cv2.COLOR_BGR2RGB)
+            channels = np_img.shape[2]
+            if channels == 4:
+                img_mode = ImageMode.RGBA
+                alpha = np_img[:, :, 3]
+                np_img = np_img[:, :, 0:3]
+                np_img = cv2.cvtColor(np_img, cv2.COLOR_BGR2RGB)
+                if esrgan_alpha_upscale:
+                    # Alpha channel will also be upscaled
+                    alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
+            else:
+                img_mode = ImageMode.RGB
+                np_img = cv2.cvtColor(np_img, cv2.COLOR_BGR2RGB)
+
+        # ------------------- process image (without the alpha channel) ------------------- #
 
         # ------------------- process image (without the alpha channel) ------------------- #
         self.pre_process(np_img)
