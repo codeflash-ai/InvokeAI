@@ -1,7 +1,6 @@
 import math
 from typing import List, Union
 
-import einops
 import torch
 from PIL import Image
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
@@ -72,18 +71,27 @@ class XLabsIPAdapterExtension:
 
         ip_adapter_block = self._model.ip_adapter_double_blocks.double_blocks[block_index]
 
-        ip_key = ip_adapter_block.ip_adapter_double_stream_k_proj(self._image_proj)
-        ip_value = ip_adapter_block.ip_adapter_double_stream_v_proj(self._image_proj)
+        ip_proj = self._image_proj
+        ip_key = ip_adapter_block.ip_adapter_double_stream_k_proj(ip_proj)
+        ip_value = ip_adapter_block.ip_adapter_double_stream_v_proj(ip_proj)
 
-        # Reshape projections for multi-head attention.
-        ip_key = einops.rearrange(ip_key, "B L (H D) -> B H L D", H=block.num_heads)
-        ip_value = einops.rearrange(ip_value, "B L (H D) -> B H L D", H=block.num_heads)
+        H = block.num_heads
+        # Only call rearrange once for each tensor
+        # Reuse shape computation for both keys and values by extracting D from the last dim and computing it once
+        # (Saves repeated regex parsing inside einops)
+        B, L, HD = ip_key.shape
+        D = HD // H
+        # Use torch.view for potentially faster reshape than einops (note: must ensure the tensor is contiguous)
+        ip_key = ip_key.view(B, L, H, D).permute(0, 2, 1, 3)
+        ip_value = ip_value.view(B, L, H, D).permute(0, 2, 1, 3)
 
         # Compute attention between IP projections and the latent query.
         ip_attn = torch.nn.functional.scaled_dot_product_attention(
             img_q, ip_key, ip_value, dropout_p=0.0, is_causal=False
         )
-        ip_attn = einops.rearrange(ip_attn, "B H L D -> B L (H D)", H=block.num_heads)
+        # Reverse the rearrangement: permute back and reshape
+        # ip_attn shape: (B, H, L, D) -> (B, L, H, D) -> (B, L, H*D)
+        ip_attn = ip_attn.permute(0, 2, 1, 3).reshape(B, L, H * D)
 
         img = img + weight * ip_attn
 
