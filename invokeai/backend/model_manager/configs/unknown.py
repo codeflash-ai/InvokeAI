@@ -1,7 +1,7 @@
-from copy import deepcopy
-from typing import Any, Literal, Self
+from typing import Any, Literal
 
 from pydantic import Field
+from typing_extensions import Self
 
 from invokeai.app.services.config.config_default import get_config
 from invokeai.backend.model_manager.configs.base import Config_Base
@@ -30,7 +30,8 @@ class Unknown_Config(Config_Base):
         performed by ModelConfigFactory before this method is called.
         """
 
-        cloned_override_fields = deepcopy(override_fields)
+        # Avoid deepcopy for shallow removal of specific keys; dict.copy is sufficient and much faster
+        cloned_override_fields = override_fields.copy()
         cloned_override_fields.pop("base", None)
         cloned_override_fields.pop("type", None)
         cloned_override_fields.pop("format", None)
