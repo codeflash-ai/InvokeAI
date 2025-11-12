@@ -85,8 +85,13 @@ class ModelLoaderRegistry(ModelLoaderRegistryBase):
     ) -> Tuple[Type[ModelLoaderBase], Config_Base, Optional[SubModelType]]:
         """Get subclass of ModelLoaderBase registered to handle base and type."""
 
-        key1 = cls._to_registry_key(config.base, config.type, config.format)  # for a specific base type
-        key2 = cls._to_registry_key(BaseModelType.Any, config.type, config.format)  # with wildcard Any
+        base_value = config.base.value
+        type_value = config.type.value
+        format_value = config.format.value
+        any_value = BaseModelType.Any.value
+
+        key1 = f"{base_value}-{type_value}-{format_value}"  # for a specific base type
+        key2 = f"{any_value}-{type_value}-{format_value}"  # with wildcard Any
         implementation = cls._registry.get(key1) or cls._registry.get(key2)
         if not implementation:
             raise NotImplementedError(
