@@ -191,26 +191,36 @@ class HEDEdgeDetector:
         height, width, _channels = np_image.shape
 
         with torch.no_grad():
-            image_hed = torch.from_numpy(np_image.copy()).float().to(device)
+            # Avoid copy if not needed; use float32 throughout if possible for efficiency
+            image_hed = torch.from_numpy(np_image).float().to(device)
             image_hed = rearrange(image_hed, "h w c -> 1 c h w")
-            edges = self.model(image_hed)
-            edges = [e.detach().cpu().numpy().astype(np.float32)[0, 0] for e in edges]
-            edges = [cv2.resize(e, (width, height), interpolation=cv2.INTER_LINEAR) for e in edges]
-            edges = np.stack(edges, axis=2)
-            edge = 1 / (1 + np.exp(-np.mean(edges, axis=2).astype(np.float64)))
+            edges_out = self.model(image_hed)
+            # Preallocate output arrays, iterate to reuse temporaries
+            n_edges = len(edges_out)
+            resized_edges = np.empty((height, width, n_edges), dtype=np.float32)
+            for idx, e in enumerate(edges_out):
+                arr = e.detach().cpu().numpy().astype(np.float32)[0, 0]
+                arr = cv2.resize(arr, (width, height), interpolation=cv2.INTER_LINEAR)
+                resized_edges[:, :, idx] = arr
+            # Efficient mean and sigmoid without temporaries
+            edge_map = np.mean(resized_edges, axis=2, dtype=np.float32)
+            np.exp(-edge_map, out=edge_map)
+            np.add(edge_map, 1, out=edge_map)
+            np.reciprocal(edge_map, out=edge_map)
+            # Now edge_map holds: 1/(1 + exp(-mean))
             if safe:
-                edge = safe_step(edge)
-            edge = (edge * 255.0).clip(0, 255).astype(np.uint8)
+                edge_map = safe_step(edge_map)
+            edge_img = (edge_map * 255.0).clip(0, 255).astype(np.uint8)
 
-        detected_map = edge
+        detected_map = edge_img
 
         detected_map = cv2.resize(detected_map, (width, height), interpolation=cv2.INTER_LINEAR)
 
         if scribble:
             detected_map = nms(detected_map, 127, 3.0)
             detected_map = cv2.GaussianBlur(detected_map, (0, 0), 3.0)
-            detected_map[detected_map > 4] = 255
-            detected_map[detected_map < 255] = 0
+            # Use np.where for more efficient masking
+            detected_map = np.where(detected_map > 4, 255, 0).astype(np.uint8)
 
         output = np_to_pil(detected_map)
 

@@ -5,6 +5,13 @@ import cv2
 import numpy as np
 from PIL import Image
 
+_NMS_FILTERS = (
+    np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]], dtype=np.uint8),
+    np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]], dtype=np.uint8),
+    np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.uint8),
+    np.array([[0, 0, 1], [0, 1, 0], [1, 0, 0]], dtype=np.uint8),
+)
+
 
 class InitImageResizer:
     """Simple class to create resized copies of an Image while preserving the aspect ratio."""
@@ -76,7 +83,8 @@ def make_grid(image_list, rows=None, cols=None):
 
 def pil_to_np(image: Image.Image) -> np.ndarray:
     """Converts a PIL image to a numpy array."""
-    return np.array(image, dtype=np.uint8)
+    # Use np.asarray to avoid unnecessary copy if the underlying data is already ndarray
+    return np.asarray(image, dtype=np.uint8)
 
 
 def np_to_pil(image: np.ndarray) -> Image.Image:
@@ -189,20 +197,14 @@ def nms(np_img: np.ndarray, threshold: Optional[int] = None, sigma: Optional[flo
         # Blurring the image can help to thin out features
         np_img = cv2.GaussianBlur(np_img.astype(np.float32), (0, 0), sigma)
 
-    filter_1 = np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]], dtype=np.uint8)
-    filter_2 = np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]], dtype=np.uint8)
-    filter_3 = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.uint8)
-    filter_4 = np.array([[0, 0, 1], [0, 1, 0], [1, 0, 0]], dtype=np.uint8)
-
     nms_img = np.zeros_like(np_img)
-
-    for f in [filter_1, filter_2, filter_3, filter_4]:
+    for f in _NMS_FILTERS:
         np.putmask(nms_img, cv2.dilate(np_img, kernel=f) == np_img, np_img)
 
     if sigma is not None and threshold is not None:
         # We blurred - now threshold to get a binary image
         thresholded = np.zeros_like(nms_img, dtype=np.uint8)
-        thresholded[nms_img > threshold] = 255
+        np.putmask(thresholded, nms_img > threshold, 255)
         return thresholded
 
     return nms_img
