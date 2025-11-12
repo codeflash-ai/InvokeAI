@@ -158,15 +158,14 @@ class CogView4DenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
         Returns:
             list[float]: _description_
         """
-        if isinstance(self.cfg_scale, float):
-            cfg_scale = [self.cfg_scale] * num_timesteps
-        elif isinstance(self.cfg_scale, list):
-            assert len(self.cfg_scale) == num_timesteps
-            cfg_scale = self.cfg_scale
+        cfg_scale = self.cfg_scale
+        if type(cfg_scale) is float:
+            return [cfg_scale] * num_timesteps
+        elif type(cfg_scale) is list:
+            assert len(cfg_scale) == num_timesteps
+            return cfg_scale
         else:
-            raise ValueError(f"Invalid CFG scale type: {type(self.cfg_scale)}")
-
-        return cfg_scale
+            raise ValueError(f"Invalid CFG scale type: {type(cfg_scale)}")
 
     def _convert_timesteps_to_sigmas(self, image_seq_len: int, timesteps: torch.Tensor) -> list[float]:
         # The logic to prepare the timestep / sigma schedule is based on:
