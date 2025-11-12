@@ -3,7 +3,6 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from functools import wraps
 from logging import Logger
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
@@ -47,7 +46,6 @@ def get_model_cache_key(model_key: str, submodel_type: Optional[SubModelType] = 
 def synchronized(method: Callable[..., Any]) -> Callable[..., Any]:
     """A decorator that applies the class's self._lock to the method."""
 
-    @wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._lock:  # Automatically acquire and release the lock
             return method(self, *args, **kwargs)
