@@ -34,6 +34,10 @@ class TranslationCleaner:
         return keys
 
     def _search_codebase(self, key: str):
+        # Compile regex patterns once for better performance
+        key_pattern = re.compile(r"['\"`]" + re.escape(key) + r"['\"`]")
+        key_stem_pattern = re.compile(re.escape(key.split(".")[-1]) + r"['\"`]")
+
         for root, _dirs, files in os.walk("../src"):
             for file in files:
                 if file.endswith(".ts") or file.endswith(".tsx"):
@@ -46,10 +50,10 @@ class TranslationCleaner:
                             self.file_cache[full_path] = content
 
                     # match the whole key, surrounding by quotes
-                    if re.search(r"['\"`]" + re.escape(key) + r"['\"`]", self.file_cache[full_path]):
+                    if key_pattern.search(content):
                         return True
                     # math the stem of the key, with quotes at the end
-                    if re.search(re.escape(key.split(".")[-1]) + r"['\"`]", self.file_cache[full_path]):
+                    if key_stem_pattern.search(content):
                         return True
         return False
 
