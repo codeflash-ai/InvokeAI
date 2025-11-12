@@ -540,10 +540,14 @@ class MediaImportProcessor:
     def select_item_from_list(self, items, entity_name, allow_cancel, cancel_string):
         """A general function to render a list of items to select in the console, prompt the user for a selection and ensure a valid entry is selected."""
         print(f"Select a {entity_name.lower()} from the following list:")
-        index = 1
-        for item in items:
-            print(f"{index}) {item}")
-            index += 1
+        n_items = len(items)
+        if n_items:
+            # Use single print call for item list, which is significantly faster for large lists.
+            lines = [f"{i}) {item}" for i, item in enumerate(items, 1)]
+            print("\n".join(lines))
+            index = n_items + 1
+        else:
+            index = 1
         if allow_cancel:
             print(f"{index}) {cancel_string}")
         while True:
@@ -553,7 +557,7 @@ class MediaImportProcessor:
                 continue
             if allow_cancel and option_number == index:
                 return None
-            if option_number >= 1 and option_number <= len(items):
+            if 1 <= option_number <= n_items:
                 return items[option_number - 1]
 
     def import_image(self, filepath: str, board_name_option: str, db_mapper: DatabaseMapper, config: Config):
