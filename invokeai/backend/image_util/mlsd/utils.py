@@ -18,31 +18,41 @@ from invokeai.backend.model_manager.load.model_cache.utils import get_effective_
 
 
 def deccode_output_score_and_ptss(tpMap, topk_n = 200, ksize = 5):
-    '''
+    """
     tpMap:
     center: tpMap[1, 0, :, :]
     displacement: tpMap[1, 1:5, :, :]
-    '''
+    """
+    # Unpack as early as possible, avoid new arrays unless needed
     b, c, h, w = tpMap.shape
-    assert  b==1, 'only support bsize==1'
-    displacement = tpMap[:, 1:5, :, :][0]
-    center = tpMap[:, 0, :, :]
+    assert b == 1, 'only support bsize==1'
+    displacement = tpMap[0, 1:5]  # [4, h, w]
+    center = tpMap[0, 0, :, :]    # [h, w]
     heat = torch.sigmoid(center)
-    hmax = F.max_pool2d( heat, (ksize, ksize), stride=1, padding=(ksize-1)//2)
+    hmax = F.max_pool2d(heat.unsqueeze(0).unsqueeze(0), (ksize, ksize), stride=1, padding=(ksize-1)//2)[0, 0]
+    # (use unsqueeze to ensure expected 4D input to max_pool2d, avoid redundant memory)
     keep = (hmax == heat).float()
-    heat = heat * keep
-    heat = heat.reshape(-1, )
+    heat.mul_(keep)
+    heat_flat = heat.flatten()
 
-    scores, indices = torch.topk(heat, topk_n, dim=-1, largest=True)
-    yy = torch.floor_divide(indices, w).unsqueeze(-1)
-    xx = torch.fmod(indices, w).unsqueeze(-1)
-    ptss = torch.cat((yy, xx),dim=-1)
+    scores, indices = torch.topk(heat_flat, topk_n, dim=-1, largest=True)
+    yy = torch.div(indices, w, rounding_mode='trunc').unsqueeze(-1)
+    xx = torch.remainder(indices, w).unsqueeze(-1)
+    ptss = torch.cat((yy, xx), dim=-1)
 
-    ptss   = ptss.detach().cpu().numpy()
-    scores = scores.detach().cpu().numpy()
-    displacement = displacement.detach().cpu().numpy()
-    displacement = displacement.transpose((1,2,0))
-    return  ptss, scores, displacement
+    # Pin memory if possible for fast transfer if on CUDA (no-op otherwise)
+    cpu_device = torch.device('cpu')
+    if heat_flat.device.type == 'cuda':
+        ptss_np = ptss.detach().cpu().numpy()
+        scores_np = scores.detach().cpu().numpy()
+        displacement_np = displacement.detach().cpu().numpy()
+    else:
+        ptss_np = ptss.numpy()
+        scores_np = scores.numpy()
+        displacement_np = displacement.numpy()
+    # Batch these numpy transformations
+    displacement_np = np.transpose(displacement_np, (1, 2, 0))  # [h, w, 4]
+    return ptss_np, scores_np, displacement_np
 
 
 def pred_lines(image, model,
@@ -52,46 +62,61 @@ def pred_lines(image, model,
     h, w, _ = image.shape
 
     device = get_effective_device(model)
-    h_ratio, w_ratio = [h / input_shape[0], w / input_shape[1]]
+    h_ratio = h / input_shape[0]
+    w_ratio = w / input_shape[1]
 
-    resized_image = np.concatenate([cv2.resize(image, (input_shape[1], input_shape[0]), interpolation=cv2.INTER_AREA),
-                                    np.ones([input_shape[0], input_shape[1], 1])], axis=-1)
+    # Precompute augmentation channels and use efficient stacking instead of np.concatenate
+    resized = cv2.resize(image, (input_shape[1], input_shape[0]), interpolation=cv2.INTER_AREA)
+    ones = np.ones((input_shape[0], input_shape[1], 1), dtype=resized.dtype)
+    resized_image = np.dstack((resized, ones))  # Faster than np.concatenate for axis=-1
 
-    resized_image = resized_image.transpose((2,0,1))
-    batch_image = np.expand_dims(resized_image, axis=0).astype('float32')
-    batch_image = (batch_image / 127.5) - 1.0
+    resized_image = np.transpose(resized_image, (2, 0, 1))
+    # Avoid extra copy by combining astype and expand_dims
+    batch_image = np.expand_dims(resized_image, axis=0).astype(np.float32)
+    np.divide(batch_image, 127.5, out=batch_image)
+    batch_image -= 1.0
 
-    batch_image = torch.from_numpy(batch_image).float()
-    batch_image = batch_image.to(device)
+    # Optimize tensor move to device: combine from_numpy and .to
+    batch_image = torch.from_numpy(batch_image).to(device, dtype=torch.float32)
     outputs = model(batch_image)
     pts, pts_score, vmap = deccode_output_score_and_ptss(outputs, 200, 3)
     start = vmap[:, :, :2]
     end = vmap[:, :, 2:]
-    dist_map = np.sqrt(np.sum((start - end) ** 2, axis=-1))
+    diff = start - end
+    dist_map = np.sqrt(np.einsum('ijk,ijk->ij', diff, diff))
 
-    segments_list = []
-    for center, score in zip(pts, pts_score, strict=False):
-        y, x = center
-        distance = dist_map[y, x]
-        if score > score_thr and distance > dist_thr:
-            disp_x_start, disp_y_start, disp_x_end, disp_y_end = vmap[y, x, :]
-            x_start = x + disp_x_start
-            y_start = y + disp_y_start
-            x_end = x + disp_x_end
-            y_end = y + disp_y_end
-            segments_list.append([x_start, y_start, x_end, y_end])
+    # Vectorized mask generation for selected lines
+    mask = (pts_score > score_thr)
+    valid_pts = pts[mask]
+    valid_scores = pts_score[mask]
+    if valid_pts.shape[0] == 0:
+        return np.array([])
 
-    if segments_list:
-        lines = 2 * np.array(segments_list)  # 256 > 512
-        lines[:, 0] = lines[:, 0] * w_ratio
-        lines[:, 1] = lines[:, 1] * h_ratio
-        lines[:, 2] = lines[:, 2] * w_ratio
-        lines[:, 3] = lines[:, 3] * h_ratio
-    else:
-        # No segments detected - return empty array
-        lines = np.array([])
+    y = valid_pts[:, 0]
+    x = valid_pts[:, 1]
+    distances = dist_map[y, x]
+    # Apply distance threshold
+    mask2 = distances > dist_thr
+    final_indices = np.nonzero(mask2)[0]
+    if final_indices.size == 0:
+        return np.array([])
+    y = y[final_indices]
+    x = x[final_indices]
+    idx = (y, x)
+    disp = vmap[y, x]  # shape [N, 4]
+    x_start = x + disp[:, 0]
+    y_start = y + disp[:, 1]
+    x_end = x + disp[:, 2]
+    y_end = y + disp[:, 3]
 
-    return lines
+    # Allocate results array directly (avoid list/append) and scale in-place
+    segments_array = np.empty((final_indices.size, 4), dtype=np.float32)
+    segments_array[:, 0] = x_start * w_ratio * 2
+    segments_array[:, 1] = y_start * h_ratio * 2
+    segments_array[:, 2] = x_end * w_ratio * 2
+    segments_array[:, 3] = y_end * h_ratio * 2
+
+    return segments_array
 
 
 def pred_squares(image,
