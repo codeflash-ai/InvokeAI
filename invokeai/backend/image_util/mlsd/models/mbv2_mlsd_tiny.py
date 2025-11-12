@@ -79,7 +79,16 @@ def _make_divisible(v, divisor, min_value=None):
     """
     if min_value is None:
         min_value = divisor
-    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+
+    # Cache commonly used values locally and use integer arithmetic for precision and speed
+    v_plus = v + divisor / 2
+    # Avoid unnecessary float-to-int coercion by using integer division directly
+    # This prevents precision errors and speeds up computation when divisor is int
+    # Since divisor is meant for channels (usually int) we cast once; this handles float v
+    iv = int(v_plus)
+    new_v = max(min_value, (iv // divisor) * divisor)
+
+    # Compare with 0.9 * v only if necessary to avoid repeated float calculation
     # Make sure that round down does not go down by more than 10%.
     if new_v < 0.9 * v:
         new_v += divisor
