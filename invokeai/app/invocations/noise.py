@@ -63,10 +63,11 @@ class NoiseOutput(BaseInvocationOutput):
 
     @classmethod
     def build(cls, latents_name: str, latents: torch.Tensor, seed: int) -> "NoiseOutput":
+        shape = latents.shape
         return cls(
             noise=LatentsField(latents_name=latents_name, seed=seed),
-            width=latents.size()[3] * LATENT_SCALE_FACTOR,
-            height=latents.size()[2] * LATENT_SCALE_FACTOR,
+            width=shape[3] * LATENT_SCALE_FACTOR,
+            height=shape[2] * LATENT_SCALE_FACTOR,
         )
 
 
