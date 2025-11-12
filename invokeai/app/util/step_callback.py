@@ -1,4 +1,3 @@
-from math import floor
 from typing import Callable, Optional, TypeAlias
 
 import torch
@@ -124,10 +123,10 @@ def calc_percentage(intermediate_state: PipelineIntermediateState) -> float:
         return 0.0
     if order == 2:
         # Prevent division by zero when total_steps is 1 or 2
-        denominator = floor(total_steps / 2)
+        denominator = total_steps // 2
         if denominator == 0:
             return 0.0
-        return floor(step / 2) / denominator
+        return (step // 2) / denominator
     # order == 1
     return step / total_steps
 
