@@ -21,36 +21,42 @@ class TranslationCleaner:
     def _get_keys(self, obj: RecursiveDict, current_path: str = "", keys: list[str] | None = None):
         if keys is None:
             keys = []
-        for key in obj:
-            new_path = f"{current_path}.{key}" if current_path else key
-            next_ = obj[key]
-            if isinstance(next_, dict):
-                self._get_keys(next_, new_path, keys)
-            elif "_" in key:
-                # This typically means its a pluralized key
-                continue
-            else:
-                keys.append(new_path)
+        stack = [(obj, current_path)]
+        while stack:
+            current_obj, current_path = stack.pop()
+            for key, value in current_obj.items():
+                new_path = f"{current_path}.{key}" if current_path else key
+                if isinstance(value, dict):
+                    stack.append((value, new_path))
+                elif "_" in key:
+                    continue
+                else:
+                    keys.append(new_path)
         return keys
 
     def _search_codebase(self, key: str):
-        for root, _dirs, files in os.walk("../src"):
-            for file in files:
-                if file.endswith(".ts") or file.endswith(".tsx"):
-                    full_path = os.path.join(root, file)
-                    if full_path in self.file_cache:
-                        content = self.file_cache[full_path]
-                    else:
-                        with open(full_path, "r") as f:
-                            content = f.read()
-                            self.file_cache[full_path] = content
+        key_pattern = re.compile(r"['\"`]" + re.escape(key) + r"['\"`]")
+        stem_pattern = re.compile(re.escape(key.split(".")[-1]) + r"['\"`]")
 
-                    # match the whole key, surrounding by quotes
-                    if re.search(r"['\"`]" + re.escape(key) + r"['\"`]", self.file_cache[full_path]):
-                        return True
-                    # math the stem of the key, with quotes at the end
-                    if re.search(re.escape(key.split(".")[-1]) + r"['\"`]", self.file_cache[full_path]):
-                        return True
+        if not hasattr(self, "_src_files"):
+            self._src_files = []
+            for root, _dirs, files in os.walk("../src"):
+                for file in files:
+                    if file.endswith(".ts") or file.endswith(".tsx"):
+                        self._src_files.append(os.path.join(root, file))
+
+        for full_path in self._src_files:
+            if full_path in self.file_cache:
+                content = self.file_cache[full_path]
+            else:
+                with open(full_path, "r") as f:
+                    content = f.read()
+                    self.file_cache[full_path] = content
+
+            if key_pattern.search(content):
+                return True
+            if stem_pattern.search(content):
+                return True
         return False
 
     def _remove_key(self, obj: RecursiveDict, key: str):
