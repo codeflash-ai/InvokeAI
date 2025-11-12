@@ -8,4 +8,8 @@ def calc_tensor_size(t: torch.Tensor) -> int:
 
 def calc_tensors_size(tensors: list[torch.Tensor | None]) -> int:
     """Calculate the size of a list of tensors in bytes."""
-    return sum(calc_tensor_size(t) for t in tensors if t is not None)
+    total = 0
+    for t in tensors:
+        if t is not None:
+            total += t.nelement() * t.element_size()
+    return total
