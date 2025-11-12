@@ -28,6 +28,10 @@ from prompt_toolkit.shortcuts import message_dialog
 from invokeai.app.services.config.config_default import get_config
 from invokeai.app.util.misc import uuid_string
 
+_SPLIT_PROMPT_NEGATIVE_RE = re.compile(r"\[(.+?)\]")
+
+_SPLIT_PROMPT_CLEAN_RE = re.compile(r"(\[.+?\])")
+
 app_config = get_config()
 
 bindings = KeyBindings()
@@ -257,7 +261,21 @@ class InvokeAIMetadataParser:
     """Parses strings with json data  to find Invoke AI core metadata properties."""
 
     def __init__(self):
-        pass
+        # Precompute scheduler_map for all instances (class level for efficiency)
+        if not hasattr(self.__class__, "_scheduler_map"):
+            self.__class__._scheduler_map = {
+                "ddim": "ddim",
+                "plms": "pnmd",
+                "k_lms": "lms",
+                "k_dpm_2": "kdpm_2",
+                "k_dpm_2_a": "kdpm_2_a",
+                "dpmpp_2": "dpmpp_2s",
+                "k_dpmpp_2": "dpmpp_2m",
+                "k_dpmpp_2_a": None,  # invalid, in 2.3.x, selecting this sample would just fallback to last run or plms if new session
+                "k_euler": "euler",
+                "k_euler_a": "euler_a",
+                "k_heun": "heun",
+            }
 
     def parse_meta_tag_dream(self, dream_string):
         """Take as input an png metadata json node for the 'dream' field variant from prior to 1.15"""
@@ -289,24 +307,27 @@ class InvokeAIMetadataParser:
         props.model_name = tag_value.get("model_weights")
         img_node = tag_value.get("image")
         if img_node is not None:
-            props.generation_mode = img_node.get("type")
-            props.width = img_node.get("width")
-            props.height = img_node.get("height")
-            props.seed = img_node.get("seed")
+            # group all .get()s in a single block for locality and potential future batch optimizations
+            get = img_node.get
+
+            props.generation_mode = get("type")
+            props.width = get("width")
+            props.height = get("height")
+            props.seed = get("seed")
             props.rand_device = "cuda"  # hardcoded since all generations pre 3.0 used cuda random noise instead of cpu
-            props.cfg_scale = img_node.get("cfg_scale")
-            props.steps = img_node.get("steps")
-            props.scheduler = self.map_scheduler(img_node.get("sampler"))
-            props.strength = img_node.get("strength")
+            props.cfg_scale = get("cfg_scale")
+            props.steps = get("steps")
+            props.scheduler = self.map_scheduler(get("sampler"))
+            props.strength = get("strength")
             if props.strength is None:
-                props.strength = img_node.get("strength_steps")  # try second name for this property
-            props.init_image = img_node.get("init_image_path")
+                props.strength = get("strength_steps")
+            props.init_image = get("init_image_path")
             if props.init_image is None:  # try second name for this property
-                props.init_image = img_node.get("init_img")
+                props.init_image = get("init_img")
             # remove the path info from init_image so if we move the init image, it will be correctly relative in the new location
             if props.init_image is not None:
                 props.init_image = os.path.basename(props.init_image)
-            raw_prompt = img_node.get("prompt")
+            raw_prompt = get("prompt")
             if isinstance(raw_prompt, list):
                 raw_prompt = raw_prompt[0].get("prompt")
 
@@ -341,35 +362,31 @@ class InvokeAIMetadataParser:
         # this was more elegant as a case statement, but that's not available in python 3.9
         if old_scheduler is None:
             return None
-        scheduler_map = {
-            "ddim": "ddim",
-            "plms": "pnmd",
-            "k_lms": "lms",
-            "k_dpm_2": "kdpm_2",
-            "k_dpm_2_a": "kdpm_2_a",
-            "dpmpp_2": "dpmpp_2s",
-            "k_dpmpp_2": "dpmpp_2m",
-            "k_dpmpp_2_a": None,  # invalid, in 2.3.x, selecting this sample would just fallback to last run or plms if new session
-            "k_euler": "euler",
-            "k_euler_a": "euler_a",
-            "k_heun": "heun",
-        }
-        return scheduler_map.get(old_scheduler)
+        return self.__class__._scheduler_map.get(old_scheduler)
 
     def split_prompt(self, raw_prompt: str):
         """Split the unified prompt strings by extracting all negative prompt blocks out into the negative prompt."""
         if raw_prompt is None:
             return "", ""
-        raw_prompt_search = raw_prompt.replace("\r", "").replace("\n", "")
-        matches = re.findall(r"\[(.+?)\]", raw_prompt_search)
-        if len(matches) > 0:
-            negative_prompt = ""
+
+        # Remove \r and \n efficiently, as both are rare; don't chain .replace() needlessly
+        # If neither "\r" nor "\n" in raw_prompt, skip replace for speed
+        if "\r" in raw_prompt or "\n" in raw_prompt:
+            raw_prompt_search = raw_prompt.replace("\r", "").replace("\n", "")
+        else:
+            raw_prompt_search = raw_prompt
+
+        # Use precompiled regex and avoid unnecessary list/str allocations
+        matches = _SPLIT_PROMPT_NEGATIVE_RE.findall(raw_prompt_search)
+        if matches:
             if len(matches) == 1:
                 negative_prompt = matches[0].strip().strip(",")
             else:
-                for match in matches:
-                    negative_prompt += f"({match.strip().strip(',')})"
-            positive_prompt = re.sub(r"(\[.+?\])", "", raw_prompt_search).strip()
+                # Preallocate for group
+                negative_groups = [f"({match.strip().strip(',')})" for match in matches]
+                negative_prompt = "".join(negative_groups)
+            # Remove negative blocks and cleanup
+            positive_prompt = _SPLIT_PROMPT_CLEAN_RE.sub("", raw_prompt_search).strip()
         else:
             positive_prompt = raw_prompt_search.strip()
             negative_prompt = ""
