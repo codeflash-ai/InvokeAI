@@ -24,27 +24,42 @@ class StableDiffusionBackend:
         self._sequential_guidance = config.sequential_guidance
 
     def latents_from_embeddings(self, ctx: DenoiseContext, ext_manager: ExtensionsManager):
-        if ctx.inputs.init_timestep.shape[0] == 0:
-            return ctx.inputs.orig_latents
+        inputs = ctx.inputs
 
-        ctx.latents = ctx.inputs.orig_latents.clone()
+        # Fast return if possible, without cloning
+        if inputs.init_timestep.shape[0] == 0:
+            return inputs.orig_latents
 
-        if ctx.inputs.noise is not None:
+        if inputs.timesteps.shape[0] == 0:
+            # If no work to do after noise, just return after adding noise (if any)
+            ctx.latents = inputs.orig_latents
+            if inputs.noise is not None:
+                batch_size = ctx.latents.shape[0]
+                ctx.latents = ctx.scheduler.add_noise(
+                    ctx.latents, inputs.noise, inputs.init_timestep.expand(batch_size)
+                )
+            return ctx.latents
+
+        # Only clone if we have to differ from orig_latents
+        ctx.latents = inputs.orig_latents.clone()
+
+        if inputs.noise is not None:
             batch_size = ctx.latents.shape[0]
             # latents = noise * self.scheduler.init_noise_sigma # it's like in t2l according to diffusers
-            ctx.latents = ctx.scheduler.add_noise(
-                ctx.latents, ctx.inputs.noise, ctx.inputs.init_timestep.expand(batch_size)
-            )
-
-        # if no work to do, return latents
-        if ctx.inputs.timesteps.shape[0] == 0:
-            return ctx.latents
+            ctx.latents = ctx.scheduler.add_noise(ctx.latents, inputs.noise, inputs.init_timestep.expand(batch_size))
 
         # ext: inpaint[pre_denoise_loop, priority=normal] (maybe init, but not sure if it needed)
         # ext: preview[pre_denoise_loop, priority=low]
         ext_manager.run_callback(ExtensionCallbackType.PRE_DENOISE_LOOP, ctx)
 
-        for ctx.step_index, ctx.timestep in enumerate(tqdm(ctx.inputs.timesteps)):  # noqa: B020
+        timesteps = inputs.timesteps
+        # Only activate tqdm if more than 1 step (avoid its overhead on singleton/empty cases)
+        tqdm_disable = timesteps.shape[0] <= 1
+
+        for step_idx, timestep in enumerate(tqdm(timesteps, disable=tqdm_disable)):
+            ctx.step_index = step_idx
+            ctx.timestep = timestep
+
             # ext: inpaint (apply mask to latents on non-inpaint models)
             ext_manager.run_callback(ExtensionCallbackType.PRE_STEP, ctx)
 

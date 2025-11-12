@@ -45,10 +45,13 @@ class ExtensionsManager:
             self._ordered_callbacks[callback_type] = sorted(callbacks, key=lambda x: x.metadata.order)
 
     def run_callback(self, callback_type: ExtensionCallbackType, ctx: DenoiseContext):
-        if self._is_canceled and self._is_canceled():
+        is_canceled = self._is_canceled
+        if is_canceled is not None and is_canceled():
             raise CanceledException
 
-        callbacks = self._ordered_callbacks.get(callback_type, [])
+        callbacks = self._ordered_callbacks.get(callback_type)
+        if not callbacks:
+            callbacks = self._EMPTY_CB_LIST
         for cb in callbacks:
             cb.function(ctx)
 
