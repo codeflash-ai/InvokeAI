@@ -41,6 +41,8 @@ class InvokeAIArgs:
     @staticmethod
     def parse_args() -> Optional[Namespace]:
         """Parse CLI args and store the result."""
-        InvokeAIArgs.args = _parser.parse_args()
+        # Avoid repeated attribute access for slight performance gain
+        args = _parser.parse_args()
+        InvokeAIArgs.args = args
         InvokeAIArgs.did_parse = True
-        return InvokeAIArgs.args
+        return args
