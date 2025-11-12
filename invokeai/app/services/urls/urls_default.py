@@ -7,6 +7,7 @@ class LocalUrlService(UrlServiceBase):
     def __init__(self, base_url: str = "api/v1", base_url_v2: str = "api/v2"):
         self._base_url = base_url
         self._base_url_v2 = base_url_v2
+        self._model_image_url_prefix = f"{self._base_url_v2}/models/i/"
 
     def get_image_url(self, image_name: str, thumbnail: bool = False) -> str:
         image_basename = os.path.basename(image_name)
@@ -18,7 +19,7 @@ class LocalUrlService(UrlServiceBase):
         return f"{self._base_url}/images/i/{image_basename}/full"
 
     def get_model_image_url(self, model_key: str) -> str:
-        return f"{self._base_url_v2}/models/i/{model_key}/image"
+        return f"{self._model_image_url_prefix}{model_key}/image"
 
     def get_style_preset_image_url(self, style_preset_id: str) -> str:
         return f"{self._base_url}/style_presets/i/{style_preset_id}/image"
