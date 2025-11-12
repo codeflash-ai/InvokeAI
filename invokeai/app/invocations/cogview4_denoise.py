@@ -176,18 +176,10 @@ class CogView4DenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
         # This implementation differs slightly from the original for the sake of simplicity (differs in terminal value
         # handling, not quantizing timesteps to integers, etc.).
 
-        def calculate_timestep_shift(
-            image_seq_len: int, base_seq_len: int = 256, base_shift: float = 0.25, max_shift: float = 0.75
-        ) -> float:
-            m = (image_seq_len / base_seq_len) ** 0.5
-            mu = m * max_shift + base_shift
-            return mu
+        m = (image_seq_len / 256) ** 0.5
+        mu = m * 0.75 + 0.25
 
-        def time_shift_linear(mu: float, sigma: float, t: torch.Tensor) -> torch.Tensor:
-            return mu / (mu + (1 / t - 1) ** sigma)
-
-        mu = calculate_timestep_shift(image_seq_len)
-        sigmas = time_shift_linear(mu, 1.0, timesteps)
+        sigmas = mu / (mu + (1.0 / timesteps - 1.0))
         return sigmas.tolist()
 
     def _run_diffusion(
