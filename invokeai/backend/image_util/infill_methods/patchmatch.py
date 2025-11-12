@@ -41,7 +41,8 @@ class PatchMatch:
 
     @classmethod
     def patchmatch_available(cls) -> bool:
-        cls._load_patch_match()
+        if not cls.tried_load:
+            cls._load_patch_match()
         if not cls.patch_match:
             return False
         return cls.patch_match.patchmatch_available
