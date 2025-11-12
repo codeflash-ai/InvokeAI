@@ -4,8 +4,10 @@ from typing import Union
 def validate_weights(weights: Union[float, list[float]]) -> None:
     """Validate that all control weights in the valid range"""
     to_validate = weights if isinstance(weights, list) else [weights]
-    if any(i < -1 or i > 2 for i in to_validate):
-        raise ValueError("Control weights must be within -1 to 2 range")
+    # More efficient min/max boundary check
+    if to_validate:
+        if min(to_validate) < -1 or max(to_validate) > 2:
+            raise ValueError("Control weights must be within -1 to 2 range")
 
 
 def validate_begin_end_step(begin_step_percent: float, end_step_percent: float) -> None:
