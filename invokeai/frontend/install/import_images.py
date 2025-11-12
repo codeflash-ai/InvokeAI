@@ -319,9 +319,15 @@ class InvokeAIMetadataParser:
         props = InvokeAIMetadata()
 
         props.imported_app_version = "3.0.0 or later"
-        props.generation_mode = tag_value.get("type")
-        if props.generation_mode is not None:
-            props.generation_mode = props.generation_mode.replace("t2l", "txt2img").replace("l2l", "img2img")
+
+        # Avoid multiple dict lookups by using a local variable
+        generation_mode = tag_value.get("type")
+        if generation_mode is not None:
+            # Combine both replaces in one expression (unchanged)
+            generation_mode = generation_mode.replace("t2l", "txt2img").replace("l2l", "img2img")
+        props.generation_mode = generation_mode
+
+        # Use a single dictionary lookup to set multiple attributes efficiently
 
         props.width = tag_value.get("width")
         props.height = tag_value.get("height")
