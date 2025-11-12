@@ -208,25 +208,26 @@ class IPAdapterInvocation(BaseInvocation):
             name=image_encoder_model_name, base=BaseModelType.Any, type=ModelType.CLIPVision
         )
 
-        if not len(image_encoder_models) > 0:
-            context.logger.warning(
-                f"The image encoder required by this IP Adapter ({image_encoder_model_name}) is not installed. \
-                    Downloading and installing now. This may take a while."
-            )
+        if image_encoder_models:
+            return image_encoder_models[0]
 
-            installer = context._services.model_manager.install
-            # Note: We hard-code the type to CLIPVision here because if the model contains both a CLIPVision and a
-            # CLIPText model, the probe may treat it as a CLIPText model.
-            job = installer.heuristic_import(
-                image_encoder_model_id, ModelRecordChanges(name=image_encoder_model_name, type=ModelType.CLIPVision)
-            )
-            installer.wait_for_job(job, timeout=600)  # Wait for up to 10 minutes
-            image_encoder_models = context.models.search_by_attrs(
-                name=image_encoder_model_name, base=BaseModelType.Any, type=ModelType.CLIPVision
-            )
+        context.logger.warning(
+            f"The image encoder required by this IP Adapter ({image_encoder_model_name}) is not installed. \
+                Downloading and installing now. This may take a while."
+        )
 
-            if len(image_encoder_models) == 0:
-                context.logger.error("Error while fetching CLIP Vision Image Encoder")
-                assert len(image_encoder_models) == 1
+        installer = context._services.model_manager.install
+        job = installer.heuristic_import(
+            image_encoder_model_id, ModelRecordChanges(name=image_encoder_model_name, type=ModelType.CLIPVision)
+        )
+        installer.wait_for_job(job, timeout=600)  # Wait for up to 10 minutes
+
+        image_encoder_models = context.models.search_by_attrs(
+            name=image_encoder_model_name, base=BaseModelType.Any, type=ModelType.CLIPVision
+        )
+
+        if not image_encoder_models:
+            context.logger.error("Error while fetching CLIP Vision Image Encoder")
+            assert len(image_encoder_models) == 1
 
         return image_encoder_models[0]
