@@ -503,21 +503,21 @@ class MediaImportProcessor:
 
     def select_board_option(self, board_names, timestamp_string):
         """Allow the user to choose how a board is selected for imported files."""
+        # Pre-compute menu prompts outside the main loop for efficiency
+        menu = (
+            "\r\nOptions for board selection for imported images:\n"
+            f"1) Select an existing board name. (found {len(board_names)})\n"
+            "2) Specify a board name to create/add to.\n"
+            "3) Create/add to board named 'IMPORT'.\n"
+            f"4) Create/add to board named 'IMPORT' with the current datetime string appended (.e.g IMPORT_{timestamp_string}).\n"
+            "5) Create/add to board named 'IMPORT' with a the original file app_version appended (.e.g IMPORT_2.2.5)."
+        )
         while True:
-            print("\r\nOptions for board selection for imported images:")
-            print(f"1) Select an existing board name. (found {len(board_names)})")
-            print("2) Specify a board name to create/add to.")
-            print("3) Create/add to board named 'IMPORT'.")
-            print(
-                f"4) Create/add to board named 'IMPORT' with the current datetime string appended (.e.g IMPORT_{timestamp_string})."
-            )
-            print(
-                "5) Create/add to board named 'IMPORT' with a the original file app_version appended (.e.g IMPORT_2.2.5)."
-            )
+            print(menu)
             input_option = input("Specify desired board option: ")
             # This was more elegant as a case statement, but not supported in python 3.9
             if input_option == "1":
-                if len(board_names) < 1:
+                if not board_names:
                     print("\r\nThere are no existing board names to choose from. Select another option!")
                     continue
                 board_name = self.select_item_from_list(
@@ -540,20 +540,22 @@ class MediaImportProcessor:
     def select_item_from_list(self, items, entity_name, allow_cancel, cancel_string):
         """A general function to render a list of items to select in the console, prompt the user for a selection and ensure a valid entry is selected."""
         print(f"Select a {entity_name.lower()} from the following list:")
-        index = 1
-        for item in items:
-            print(f"{index}) {item}")
-            index += 1
+        # Use join and enumerate for much faster item printing
+        lines = []
+        for idx, item in enumerate(items, start=1):
+            lines.append(f"{idx}) {item}")
         if allow_cancel:
-            print(f"{index}) {cancel_string}")
+            lines.append(f"{len(items) + 1}) {cancel_string}")
+        print("\n".join(lines))
+        last_index = len(items) + 1 if allow_cancel else len(items)
         while True:
             try:
                 option_number = int(input("Specify number of selection: "))
             except ValueError:
                 continue
-            if allow_cancel and option_number == index:
+            if allow_cancel and option_number == last_index:
                 return None
-            if option_number >= 1 and option_number <= len(items):
+            if 1 <= option_number <= len(items):
                 return items[option_number - 1]
 
     def import_image(self, filepath: str, board_name_option: str, db_mapper: DatabaseMapper, config: Config):
