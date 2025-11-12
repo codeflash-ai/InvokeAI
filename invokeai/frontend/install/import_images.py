@@ -28,6 +28,12 @@ from prompt_toolkit.shortcuts import message_dialog
 from invokeai.app.services.config.config_default import get_config
 from invokeai.app.util.misc import uuid_string
 
+_RE_SEED = re.compile(r"-S\s*(\d+)")
+
+_RE_BRACKETS = re.compile(r"\[(.+?)\]")
+
+_RE_BRACKETS_SUB = re.compile(r"\[.+?\]")
+
 app_config = get_config()
 
 bindings = KeyBindings()
@@ -264,13 +270,15 @@ class InvokeAIMetadataParser:
         props = InvokeAIMetadata()
 
         props.imported_app_version = "pre1.15"
-        seed_match = re.search("-S\\s*(\\d+)", dream_string)
+        # Compile seed search pattern once
+        seed_match = _RE_SEED.search(dream_string)
         if seed_match is not None:
             try:
                 props.seed = int(seed_match[1])
             except ValueError:
                 props.seed = None
-            raw_prompt = re.sub("(-S\\s*\\d+)", "", dream_string)
+            # Remove all seed matches directly (avoid internal re compilation)
+            raw_prompt = _RE_SEED.sub("", dream_string)
         else:
             raw_prompt = dream_string
 
@@ -361,15 +369,16 @@ class InvokeAIMetadataParser:
         if raw_prompt is None:
             return "", ""
         raw_prompt_search = raw_prompt.replace("\r", "").replace("\n", "")
-        matches = re.findall(r"\[(.+?)\]", raw_prompt_search)
-        if len(matches) > 0:
-            negative_prompt = ""
+        # Use global compiled regex for speedup
+        matches = _RE_BRACKETS.findall(raw_prompt_search)
+        if matches:
+            # Pre-allocate list for negative prompt assembly, instead of repeated +=
             if len(matches) == 1:
                 negative_prompt = matches[0].strip().strip(",")
             else:
-                for match in matches:
-                    negative_prompt += f"({match.strip().strip(',')})"
-            positive_prompt = re.sub(r"(\[.+?\])", "", raw_prompt_search).strip()
+                negative_prompt = "".join(f"({match.strip().strip(',')})" for match in matches)
+            # Remove bracketed text and strip, using global compiled regex
+            positive_prompt = _RE_BRACKETS_SUB.sub("", raw_prompt_search).strip()
         else:
             positive_prompt = raw_prompt_search.strip()
             negative_prompt = ""
