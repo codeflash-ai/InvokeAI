@@ -192,10 +192,7 @@ class InvokeAIMetadata:
         pass
 
     def __str__(self):
-        formatted_str = f"{self.generation_mode}~{self.steps}~{self.cfg_scale}~{self.model_name}~{self.scheduler}~{self.seed}~{self.width}~{self.height}~{self.rand_device}~{self.strength}~{self.init_image}"
-        formatted_str += f"\r\npositive_prompt: {self.positive_prompt}"
-        formatted_str += f"\r\nnegative_prompt: {self.negative_prompt}"
-        return formatted_str
+        return f"{self.generation_mode}~{self.steps}~{self.cfg_scale}~{self.model_name}~{self.scheduler}~{self.seed}~{self.width}~{self.height}~{self.rand_device}~{self.strength}~{self.init_image}\r\npositive_prompt: {self.positive_prompt}\r\nnegative_prompt: {self.negative_prompt}"
 
     generation_mode = None
     steps = None
