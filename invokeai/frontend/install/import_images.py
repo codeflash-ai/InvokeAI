@@ -28,6 +28,8 @@ from prompt_toolkit.shortcuts import message_dialog
 from invokeai.app.services.config.config_default import get_config
 from invokeai.app.util.misc import uuid_string
 
+_RE_SUB_REMOVE_BLOCKS = re.compile(r"(\[.+?\])")
+
 app_config = get_config()
 
 bindings = KeyBindings()
@@ -362,18 +364,20 @@ class InvokeAIMetadataParser:
             return "", ""
         raw_prompt_search = raw_prompt.replace("\r", "").replace("\n", "")
         matches = re.findall(r"\[(.+?)\]", raw_prompt_search)
-        if len(matches) > 0:
-            negative_prompt = ""
-            if len(matches) == 1:
+        matches_len = len(matches)
+        if matches_len > 0:
+            if matches_len == 1:
+                # Only one match, just clean and use directly
                 negative_prompt = matches[0].strip().strip(",")
             else:
-                for match in matches:
-                    negative_prompt += f"({match.strip().strip(',')})"
-            positive_prompt = re.sub(r"(\[.+?\])", "", raw_prompt_search).strip()
+                # Precollect all cleaned items and join efficiently, avoid += in loop
+                cleaned_matches = [f"({m.strip().strip(',')})" for m in matches]
+                negative_prompt = "".join(cleaned_matches)
+            # Use compiled regex for re.sub performance improvement
+            positive_prompt = _RE_SUB_REMOVE_BLOCKS.sub("", raw_prompt_search).strip()
         else:
             positive_prompt = raw_prompt_search.strip()
             negative_prompt = ""
-
         return positive_prompt, negative_prompt
 
 
