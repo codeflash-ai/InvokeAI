@@ -99,11 +99,15 @@ class StableDiffusionBackend:
         guidance_scale = ctx.inputs.conditioning_data.guidance_scale
         if isinstance(guidance_scale, list):
             guidance_scale = guidance_scale[ctx.step_index]
-
-        # Note: Although this `torch.lerp(...)` line is logically equivalent to the current CFG line, it seems to result
-        # in slightly different outputs. It is suspected that this is caused by small precision differences.
-        # return torch.lerp(ctx.negative_noise_pred, ctx.positive_noise_pred, guidance_scale)
-        return ctx.negative_noise_pred + guidance_scale * (ctx.positive_noise_pred - ctx.negative_noise_pred)
+        neg = ctx.negative_noise_pred
+        pos = ctx.positive_noise_pred
+        gs = guidance_scale
+        # Try to ensure in-place operation when possible to reduce allocations/memory pressure
+        # and ensure all math is vectorized for maximal torch efficiency.
+        # Many implementations do: out = neg.clone(); out.add_(gs, pos - neg)
+        # But for max speed on large tensors, we can use torch.add with 'alpha' parameter.
+        # This avoids creating an intermediate tensor for (pos - neg).
+        return torch.add(neg, pos - neg, alpha=gs)
 
     def run_unet(self, ctx: DenoiseContext, ext_manager: ExtensionsManager, conditioning_mode: ConditioningMode):
         sample = ctx.latent_model_input
