@@ -216,13 +216,20 @@ class MobileNetV2(nn.Module):
     def _forward_impl(self, x):
         # This exists since TorchScript doesn't support inheritance, so the superclass method
         # (this one) needs to have a name other than `forward` that can be accessed in a subclass
-        fpn_features = []
+        fpn_features = [None] * len(self.fpn_selected)  # Preallocate for exactly 3 slots, known from self.fpn_selected
+        selected_set = set(self.fpn_selected)  # Minor speedup for in checks
+        last_selected_idx = self.fpn_selected[-1]
+        selected_pos = 0
+
         for i, f in enumerate(self.features):
-            if i > self.fpn_selected[-1]:
+            if i > last_selected_idx:
                 break
             x = f(x)
-            if i in self.fpn_selected:
-                fpn_features.append(x)
+            if i in selected_set:
+                # Small optimization: assign to preallocated index instead of .append()
+                fpn_features[selected_pos] = x
+                selected_pos += 1
+
 
         c2, c3, c4 = fpn_features
         return c2, c3, c4
