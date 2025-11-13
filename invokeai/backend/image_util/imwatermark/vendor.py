@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -96,19 +97,17 @@ class WatermarkEncoder(object):
 
 class WatermarkDecoder(object):
     def __init__(self, wm_type="bytes", length=0):
-        self._wmType = wm_type
         if wm_type == "ipv4":
-            self._wmLen = 32
+            wm_len = 32
         elif wm_type == "uuid":
-            self._wmLen = 128
-        elif wm_type == "bytes":
-            self._wmLen = length
-        elif wm_type == "bits":
-            self._wmLen = length
-        elif wm_type == "b16":
-            self._wmLen = length
+            wm_len = 128
+        elif wm_type in ("bytes", "bits", "b16"):
+            wm_len = length
         else:
             raise NameError("%s is unsupported" % wm_type)
+
+        self._wmType = wm_type
+        self._wmLen = wm_len
 
     def reconstruct_ipv4(self, bits):
         ips = [str(ip) for ip in list(np.packbits(bits))]
@@ -153,11 +152,11 @@ class WatermarkDecoder(object):
             return self.reconstruct_bytes(bits)
 
     def decode(self, cv2Image, method="dwtDct", **configs):
-        (r, c, channels) = cv2Image.shape
-        if r * c < 256 * 256:
+        shape = cv2Image.shape
+        # Unpack once, avoid unpacking and creating 3 variables for big images
+        r, c = shape[0], shape[1]
+        if r * c < 65536:  # 256*256 = 65536
             raise RuntimeError("image too small, should be larger than 256x256")
-
-        bits = []
         if method == "dwtDct":
             embed = EmbedMaxDct(watermarks=[], wmLen=self._wmLen, **configs)
             bits = embed.decode(cv2Image)
