@@ -177,15 +177,14 @@ class SD3DenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
         Returns:
             list[float]: _description_
         """
-        if isinstance(self.cfg_scale, float):
-            cfg_scale = [self.cfg_scale] * num_timesteps
-        elif isinstance(self.cfg_scale, list):
-            assert len(self.cfg_scale) == num_timesteps
-            cfg_scale = self.cfg_scale
-        else:
-            raise ValueError(f"Invalid CFG scale type: {type(self.cfg_scale)}")
-
-        return cfg_scale
+        cfg_scale = self.cfg_scale
+        if isinstance(cfg_scale, float):
+            # Use list multiplication only once, avoiding repeated attribute lookups
+            return [cfg_scale] * num_timesteps
+        if isinstance(cfg_scale, list):
+            assert len(cfg_scale) == num_timesteps
+            return cfg_scale
+        raise ValueError(f"Invalid CFG scale type: {type(cfg_scale)}")
 
     def _run_diffusion(
         self,
