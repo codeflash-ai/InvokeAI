@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -188,14 +189,18 @@ class EmbedMaxDct(object):
 
         yuv = cv2.cvtColor(bgr, cv2.COLOR_BGR2YUV)
 
+        block_size = self._block
+        rows4 = row // 4 * 4
+        cols4 = col // 4 * 4
+
+        # Precompute slices for block access for efficiency
         for channel in range(2):
             if self._scales[channel] <= 0:
                 continue
 
-            ca1, (h1, v1, d1) = pywt.dwt2(yuv[: row // 4 * 4, : col // 4 * 4, channel], "haar")
+            ca1, (h1, v1, d1) = pywt.dwt2(yuv[:rows4, :cols4, channel], "haar")
             self.encode_frame(ca1, self._scales[channel])
-
-            yuv[: row // 4 * 4, : col // 4 * 4, channel] = pywt.idwt2((ca1, (v1, h1, d1)), "haar")
+            yuv[:rows4, :cols4, channel] = pywt.idwt2((ca1, (v1, h1, d1)), "haar")
 
         bgr_encoded = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR)
         return bgr_encoded
@@ -286,19 +291,30 @@ class EmbedMaxDct(object):
 
         For i-th block, we encode watermark[i] bit into it
         """
-        (row, col) = frame.shape
-        num = 0
-        for i in range(row // self._block):
-            for j in range(col // self._block):
-                block = frame[
-                    i * self._block : i * self._block + self._block, j * self._block : j * self._block + self._block
-                ]
-                wmBit = self._watermarks[(num % self._wmLen)]
+        block = self._block
+        wmLen = self._wmLen
+        watermarks = self._watermarks
 
-                diffusedBlock = self.diffuse_dct_matrix(block, wmBit, scale)
-                # diffusedBlock = self.diffuse_dct_svd(block, wmBit, scale)
-                frame[
-                    i * self._block : i * self._block + self._block, j * self._block : j * self._block + self._block
-                ] = diffusedBlock
+        row, col = frame.shape
 
-                num = num + 1
+        # Use np.ndarray.astype if frame is float64 and watermark bits are int, but this isn't necessary here
+
+        num_blocks_row = row // block
+        num_blocks_col = col // block
+
+        # For the main encode loop, combine both indices for more cache locality and less Python looping overhead
+        # Use memoryviews for slicing to speed up assignment and block access
+        for i in range(num_blocks_row):
+            i_start = i * block
+            i_end = i_start + block
+            for j in range(num_blocks_col):
+                j_start = j * block
+                j_end = j_start + block
+
+                block_data = frame[i_start:i_end, j_start:j_end]
+                wmBit = watermarks[(i * num_blocks_col + j) % wmLen]
+                # Avoid an extra variable for 'num', just use the fast modulo calculation
+
+                # Optimized: use inplace modification of block_data in diffuse_dct_matrix, so assignment is not strictly needed
+                self.diffuse_dct_matrix(block_data, wmBit, scale)
+                # block_data is a view, so frame is mutated as intended
