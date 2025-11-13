@@ -405,9 +405,12 @@ class DefaultSessionProcessor(SessionProcessorBase):
         return self.get_status()
 
     def get_status(self) -> SessionProcessorStatus:
+        resume_event_is_set = self._resume_event.is_set()
+        queue_item_exists = self._queue_item is not None
+        # Inline checks to variables to avoid attribute access in constructor
         return SessionProcessorStatus(
-            is_started=self._resume_event.is_set(),
-            is_processing=self._queue_item is not None,
+            is_started=resume_event_is_set,
+            is_processing=queue_item_exists,
         )
 
     def _process(
