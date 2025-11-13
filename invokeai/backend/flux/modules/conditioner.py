@@ -21,6 +21,7 @@ class HFEncoder(nn.Module):
         self.tokenizer = tokenizer
         self.hf_module = encoder
         self.hf_module = self.hf_module.eval().requires_grad_(False)
+        self.device = TorchDevice.choose_torch_device()
 
     def forward(self, text: list[str]) -> Tensor:
         batch_encoding = self.tokenizer(
@@ -34,7 +35,7 @@ class HFEncoder(nn.Module):
         )
 
         outputs = self.hf_module(
-            input_ids=batch_encoding["input_ids"].to(TorchDevice.choose_torch_device()),
+            input_ids=batch_encoding["input_ids"].to(self.device),
             attention_mask=None,
             output_hidden_states=False,
         )
