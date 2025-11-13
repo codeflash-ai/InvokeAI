@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -111,8 +112,8 @@ class WatermarkDecoder(object):
             raise NameError("%s is unsupported" % wm_type)
 
     def reconstruct_ipv4(self, bits):
-        ips = [str(ip) for ip in list(np.packbits(bits))]
-        return ".".join(ips)
+        arr = np.packbits(bits)
+        return ".".join(map(str, arr.tolist()))
 
     def reconstruct_uuid(self, bits):
         nums = np.packbits(bits)
