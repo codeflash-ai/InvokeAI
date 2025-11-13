@@ -194,11 +194,19 @@ class ModelHash:
         def hashlib_hasher(file_path: Path) -> str:
             """Hashes a file using a hashlib algorithm. Uses `memoryview` to avoid reading the entire file into memory."""
             hasher = hashlib.new(algorithm)
-            buffer = bytearray(128 * 1024)
+            buffer_size = (
+                512 * 1024
+            )  # Increased buffer size from 128KB to 512KB for faster IO (safe for modern systems)
+            buffer = bytearray(buffer_size)
             mv = memoryview(buffer)
             with open(file_path, "rb", buffering=0) as f:
-                while n := f.readinto(mv):
-                    hasher.update(mv[:n])
+                readinto = f.readinto
+                update = hasher.update
+                while True:
+                    n = readinto(mv)
+                    if n == 0:
+                        break
+                    update(mv[:n])
             return hasher.hexdigest()
 
         return hashlib_hasher
