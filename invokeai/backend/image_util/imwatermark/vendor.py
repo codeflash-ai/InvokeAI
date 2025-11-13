@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -222,18 +223,21 @@ class EmbedMaxDct(object):
     def decode_frame(self, frame, scale, scores):
         (row, col) = frame.shape
         num = 0
+        block = self._block
+        wmLen = self._wmLen
 
-        for i in range(row // self._block):
-            for j in range(col // self._block):
-                block = frame[
-                    i * self._block : i * self._block + self._block, j * self._block : j * self._block + self._block
-                ]
-
-                score = self.infer_dct_matrix(block, scale)
-                # score = self.infer_dct_svd(block, scale)
-                wmBit = num % self._wmLen
+        # Precompute the slicing indices for better performance
+        for i in range(row // block):
+            i_start = i * block
+            i_end = i_start + block
+            for j in range(col // block):
+                j_start = j * block
+                j_end = j_start + block
+                blk = frame[i_start:i_end, j_start:j_end]
+                score = self.infer_dct_matrix(blk, scale)
+                wmBit = num % wmLen
                 scores[wmBit].append(score)
-                num = num + 1
+                num += 1
 
         return scores
 
@@ -266,17 +270,19 @@ class EmbedMaxDct(object):
         return block
 
     def infer_dct_matrix(self, block, scale):
-        pos = np.argmax(abs(block.flatten()[1:])) + 1
-        i, j = pos // self._block, pos % self._block
+        # Minor perf: use np.abs and np.argmax efficiently
+        flat = block.ravel()
+        idx = np.argmax(np.abs(flat[1:])) + 1
+        # Unroll divisor and modulo computations
+        block_size = self._block
+        i = idx // block_size
+        j = idx % block_size
 
         val = block[i][j]
         if val < 0:
-            val = abs(val)
+            val = -val
 
-        if (val % scale) > 0.5 * scale:
-            return 1
-        else:
-            return 0
+        return int((val % scale) > (0.5 * scale))
 
     def encode_frame(self, frame, scale):
         """
