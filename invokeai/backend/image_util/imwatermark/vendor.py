@@ -7,9 +7,10 @@
 # `opencv-contrib-python`. It's easier to copy the code over than complicate the installation process by
 # requiring an extra post-install step of removing `opencv-python` and installing `opencv-contrib-python`.
 
+import base64
 import struct
 import uuid
-import base64
+
 import cv2
 import numpy as np
 import pywt
@@ -266,12 +267,17 @@ class EmbedMaxDct(object):
         return block
 
     def infer_dct_matrix(self, block, scale):
-        pos = np.argmax(abs(block.flatten()[1:])) + 1
-        i, j = pos // self._block, pos % self._block
+        # Inline routine for fast max-abs with index (excluding DC)
+        flat = block.ravel()
+        v = flat[1:]
+        abs_v = np.abs(v)
+        pos_in_v = np.argmax(abs_v)
+        pos = pos_in_v + 1  # because we skipped DC at index 0
 
-        val = block[i][j]
+        i, j = divmod(pos, self._block)
+        val = block[i, j]
         if val < 0:
-            val = abs(val)
+            val = -val  # abs(val), but avoids Python function call
 
         if (val % scale) > 0.5 * scale:
             return 1
